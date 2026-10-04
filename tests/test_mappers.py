@@ -95,3 +95,14 @@ def test_highest_probability_candidate_wins() -> None:
 def test_empty_payload() -> None:
     assert mappers.map_exercise_sets({}) == []
     assert mappers.map_exercise_sets({"exerciseSets": None}) == []
+
+
+def test_running_activity_summary() -> None:
+    row = mappers.map_activity(load("running_activity_summary.json"), TORONTO)
+    assert row["type"] == "running"
+    assert row["local_date"] == date(2025, 10, 4)
+    assert row["distance_m"] == Decimal("10178.7")
+    assert row["duration_s"] == 3815
+    assert row["elevation_gain_m"] == Decimal("40.0")
+    assert row["avg_hr"] == 176
+    assert row["perceived_effort"] is None
