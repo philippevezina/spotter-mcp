@@ -1,0 +1,135 @@
+{
+  "accessControlRuleDTO": {
+    "typeId": 2,
+    "typeKey": "private"
+  },
+  "activityId": 900000001,
+  "activityName": "Spotter test W0 2025-10-06",
+  "activityTypeDTO": {
+    "isHidden": false,
+    "parentTypeId": 29,
+    "restricted": false,
+    "trimmable": false,
+    "typeId": 13,
+    "typeKey": "strength_training"
+  },
+  "activityUUID": {
+    "uuid": "00000000-0000-4000-8000-000000000001"
+  },
+  "eventTypeDTO": {
+    "sortOrder": 10,
+    "typeId": 9,
+    "typeKey": "uncategorized"
+  },
+  "isMultiSportParent": false,
+  "metadataDTO": {
+    "activityImages": [],
+    "agentString": null,
+    "associatedCourseId": null,
+    "associatedWorkoutId": 800000001,
+    "autoCalcCalories": false,
+    "calendarEventInfo": null,
+    "childActivityTypes": [],
+    "childIds": [],
+    "deviceMetaDataDTO": {
+      "deviceTypePk": 37189
+    },
+    "diveNumber": null,
+    "eBikeAssistModeInfoDTOList": null,
+    "eBikeBatteryRemaining": null,
+    "eBikeBatteryUsage": null,
+    "eBikeMaxAssistModes": null,
+    "elevationCorrected": false,
+    "favorite": false,
+    "fileFormat": {
+      "formatId": 7,
+      "formatKey": "fit"
+    },
+    "gcj02": false,
+    "groupRideUUID": null,
+    "hasChartData": true,
+    "hasHeatMap": false,
+    "hasHrTimeInZones": true,
+    "hasIntensityIntervals": true,
+    "hasMultiDayActivities": false,
+    "hasPowerTimeInZones": false,
+    "hasRunPowerWindData": null,
+    "hasSplits": false,
+    "isAtpActivity": null,
+    "isOriginal": true,
+    "lapCount": 1,
+    "lastUpdateDate": "2025-10-05T18:36:10.0",
+    "manualActivity": false,
+    "personalRecord": false,
+    "runPowerWindDataEnabled": null,
+    "sensors": null,
+    "sessionResultType": "ORIGINAL",
+    "trimmed": false,
+    "uploadedDate": "2025-10-05T18:36:10.0",
+    "userInfoDto": {
+      "userPro": false,
+      "userProfilePk": 1
+    },
+    "videoUrl": null
+  },
+  "splitSummaries": [
+    {
+      "averageHR": 64.0,
+      "averageSpeed": 0.0,
+      "bmrCalories": 2.0,
+      "calories": 2.0,
+      "distance": 0.0,
+      "duration": 86.899,
+      "maxDistance": 0,
+      "maxDistanceWithPrecision": 0.0,
+      "maxHR": 70.0,
+      "movingDuration": 0.0,
+      "noOfSplits": 2,
+      "splitType": "INTERVAL_ACTIVE",
+      "totalExerciseReps": 0
+    },
+    {
+      "averageHR": 70.0,
+      "averageSpeed": 0.0,
+      "bmrCalories": 3.0,
+      "calories": 3.0,
+      "distance": 0.0,
+      "duration": 120.0,
+      "maxDistance": 0,
+      "maxDistanceWithPrecision": 0.0,
+      "maxHR": 82.0,
+      "movingDuration": 0.0,
+      "noOfSplits": 1,
+      "splitType": "INTERVAL_REST",
+      "totalExerciseReps": 0
+    }
+  ],
+  "summaryDTO": {
+    "activeSets": 2,
+    "activityTrainingLoad": 0.0262908935546875,
+    "aerobicTrainingEffectMessage": "NO_AEROBIC_BENEFIT_18",
+    "anaerobicTrainingEffect": 0.0,
+    "anaerobicTrainingEffectMessage": "NO_ANAEROBIC_BENEFIT_0",
+    "averageHR": 68.0,
+    "averageMovingSpeed": 0.0,
+    "averageSpeed": 0.0,
+    "bmrCalories": 5.0,
+    "calories": 5.0,
+    "differenceBodyBattery": 0,
+    "distance": 0.0,
+    "duration": 206.896,
+    "elapsedDuration": 206.896,
+    "maxHR": 82.0,
+    "minActivityLapDuration": 206.896,
+    "minHR": 60.0,
+    "movingDuration": 86.896,
+    "startTimeGMT": "2025-10-05T18:32:25.0",
+    "startTimeLocal": "2025-10-05T14:32:25.0",
+    "steps": 10,
+    "totalExerciseReps": 5,
+    "trainingEffect": 0.0,
+    "trainingEffectLabel": "UNKNOWN",
+    "waterEstimated": 23.0
+  },
+  "userProfileId": 1
+}
