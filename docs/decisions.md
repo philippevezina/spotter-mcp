@@ -276,3 +276,22 @@ Checked on 2026-10-04:
 - `uv run pytest` green (197 tests). The engine has 100 % branch coverage. ruff and mypy are clean.
 - `spotter sync --force` against Neon: 14 metric days, all fetched per-day, `partial: false`, 9.3 s in total. Data starts 2026-10-02, when the watch started recording. Values are plausible (resting HR 58 to 64, overnight HRV 31 to 32 ms, sleep scores 64 and 77). HRV status and readiness are null, as expected while onboarding.
 - A second `sync` reports `skipped: recent`. `--force` fetches only the last 3 days per-day.
+
+## 2026-10-04: Snapshot carries a 28-day strength rollup
+
+Why: the Phase 3 exit check asks for a 4-week summary. The last 3 sessions are not enough, and making Claude find exercise ids through search first is fragile.
+Decision: `get_training_snapshot` adds `strength_28d`: session count and dates, and per exercise its id, name, exposures, last top set, working sets, volume and trend. No ninth tool. The athlete chose this over a new tool.
+Status: decided. SPEC section 11.1 updated.
+
+## 2026-10-04: Phase 3b server details
+
+- Error policy: the snapshot never fails on Garmin. A Garmin error goes into `sync.error`, a held lock into `sync.skipped: locked`, and the rest is read from stored data. `sync_garmin` and `map_exercise` raise tool errors.
+- The snapshot checks the 10-minute rule before opening a Garmin session, so repeat snapshots make no Garmin call.
+- `sync_garmin(since)` reaches back at most 60 days. Older history uses `spotter backfill` locally, which has no budget.
+- `map_exercise` refuses a pair already in the catalog and is idempotent.
+- `search_exercises(equipment)` matches the curated `load_type`, or the name while an exercise is uncurated. Every seeded row is uncurated, so names are what work today.
+- Distances are shown in km.
+- The production app lives in `spotter.mcp.asgi`. `spotter.mcp.server` builds it from settings, so importing it needs no secrets. `spotter.mcp.dev` is a no-auth server for the local inspector only.
+- `vercel.json` sets `maxDuration` 120 s: the 60 s sync budget plus metrics and reads. `.vercelignore` keeps spikes and tests out of CLI uploads.
+- Commits 2 to 4 of the plan landed as one: the server module imports both tool groups, so separate commits would not each import cleanly.
+Status: decided.
