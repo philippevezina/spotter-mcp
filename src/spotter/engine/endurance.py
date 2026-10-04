@@ -84,7 +84,8 @@ def week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def _totals(acts: list[EnduranceActivity]) -> SportTotals:
+def totals(acts: list[EnduranceActivity]) -> SportTotals:
+    """Sum one sport's sessions. Missing values count as 0."""
     return SportTotals(
         sessions=len(acts),
         duration_s=sum(a.duration_s or 0 for a in acts),
@@ -102,6 +103,6 @@ def weekly_totals(activities: Iterable[EnduranceActivity]) -> list[WeekTotals]:
             continue
         weeks.setdefault(week_start(a.local_date), {"run": [], "ride": []})[kind].append(a)
     return [
-        WeekTotals(start, _totals(by_sport["run"]), _totals(by_sport["ride"]))
+        WeekTotals(start, totals(by_sport["run"]), totals(by_sport["ride"]))
         for start, by_sport in sorted(weeks.items())
     ]

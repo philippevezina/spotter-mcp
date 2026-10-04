@@ -1,4 +1,4 @@
-"""Phase 2 exit check: seed 3 private test strength sessions in Garmin Connect.
+"""Exit checks: seed private test strength sessions in Garmin Connect.
 
     uv run --env-file <.env.local> python spikes/seed_test_sessions.py --dry-run
     uv run --env-file <.env.local> python spikes/seed_test_sessions.py --only 1
@@ -8,7 +8,7 @@
 Throwaway. Uses the token stored in Postgres (saves a refresh). Writes created
 ids to spikes/out/seeded_sessions.json. --delete removes them from Garmin and
 from the `activities` table (CASCADE clears sets and stats).
-Expected stats per session are in docs/decisions.md.
+Expected stats are in docs/decisions.md ("Phase 3 test sessions").
 """
 
 from __future__ import annotations
@@ -38,47 +38,39 @@ PULL_UP = ("PULL_UP", "PULL_UP")
 DB_ROW = ("ROW", "DUMBBELL_ROW")
 DEADLIFT = ("DEADLIFT", "BARBELL_DEADLIFT")
 
-# (exercise, lb or None for bodyweight, reps)
-SESSIONS: dict[int, tuple[str, list[tuple[tuple[str, str], float | None, int]]]] = {
-    1: (
-        "2026-09-28",
-        [
-            (BENCH, 95, 8),  # warm-up: 51 % of 185
-            (BENCH, 185, 5),
-            (BENCH, 185, 5),
-            (BENCH, 185, 4),
-            (SQUAT, 135, 5),  # exactly 60 % of 225: working
-            (SQUAT, 225, 5),
-            (SQUAT, 225, 5),
-            (PULL_UP, None, 8),
-            (PULL_UP, None, 8),
-            (PULL_UP, None, 6),
-        ],
-    ),
-    2: (
-        "2026-09-30",
-        [
-            (BENCH, 190, 5),
-            (BENCH, 190, 5),
-            (BENCH, 190, 5),
-            (BENCH, 190, 0),  # 0-rep set: ignored
-            (DB_ROW, 60, 12),  # over 10 reps: no e1RM
-            (DB_ROW, 60, 12),
-            (DB_ROW, 60, 10),
-        ],
-    ),
-    3: (
-        "2026-10-02",
-        [
-            (SQUAT, 135, 5),  # warm-up: 55 % of 245
-            (SQUAT, 245, 5),
-            (SQUAT, 245, 5),
-            (SQUAT, 245, 3),
-            (DEADLIFT, 135, 5),  # warm-up: 43 % of 315
-            (DEADLIFT, 225, 3),  # 71 %: working
-            (DEADLIFT, 315, 5),
-        ],
-    ),
+Set = tuple[tuple[str, str], float | None, int]  # (exercise, lb or None for bodyweight, reps)
+Session = tuple[str, list[Set]]
+
+
+def upper(
+    day: str, bench: float, bench_last: int, row: float, row_reps: list[int], pull: list[int]
+) -> Session:
+    """Bench (95 lb warm-up, then 3 working sets), dumbbell row, pull-ups."""
+    sets: list[Set] = [(BENCH, 95, 8), (BENCH, bench, 5), (BENCH, bench, 5)]
+    sets += [(BENCH, bench, bench_last)]
+    sets += [(DB_ROW, row, r) for r in row_reps]
+    sets += [(PULL_UP, None, r) for r in pull]
+    return day, sets
+
+
+def lower(day: str, squat: float, deadlift: float) -> Session:
+    """Squat (95 lb warm-up, 3x5), deadlift (135 lb warm-up, 2x5). Warm-ups stay under 60 %."""
+    sets: list[Set] = [(SQUAT, 95, 5)] + [(SQUAT, squat, 5)] * 3
+    sets += [(DEADLIFT, 135, 5)] + [(DEADLIFT, deadlift, 5)] * 2
+    return day, sets
+
+
+# Phase 3 exit check: 8 sessions over 4 weeks. All stay inside the 28-day window
+# when the check runs between 2026-10-03 and 2026-10-06.
+SESSIONS: dict[int, Session] = {
+    1: upper("2026-09-09", 175, 5, 55, [12, 12, 12], [8, 8, 6]),
+    2: lower("2026-09-12", 205, 255),
+    3: upper("2026-09-16", 180, 5, 60, [12, 12, 12], [8, 8, 7]),
+    4: lower("2026-09-19", 215, 275),
+    5: upper("2026-09-23", 185, 5, 60, [12, 12, 10], [9, 8, 7]),
+    6: lower("2026-09-26", 225, 295),
+    7: upper("2026-09-30", 185, 4, 65, [10, 10, 10], [9, 9, 8]),
+    8: lower("2026-10-03", 235, 315),
 }
 
 

@@ -276,3 +276,62 @@ Checked on 2026-10-04:
 - `uv run pytest` green (197 tests). The engine has 100 % branch coverage. ruff and mypy are clean.
 - `spotter sync --force` against Neon: 14 metric days, all fetched per-day, `partial: false`, 9.3 s in total. Data starts 2026-10-02, when the watch started recording. Values are plausible (resting HR 58 to 64, overnight HRV 31 to 32 ms, sleep scores 64 and 77). HRV status and readiness are null, as expected while onboarding.
 - A second `sync` reports `skipped: recent`. `--force` fetches only the last 3 days per-day.
+
+## 2026-10-04: Snapshot carries a 28-day strength rollup
+
+Why: the Phase 3 exit check asks for a 4-week summary. The last 3 sessions are not enough, and making Claude find exercise ids through search first is fragile.
+Decision: `get_training_snapshot` adds `strength_28d`: session count and dates, and per exercise its id, name, exposures, last top set, working sets, volume and trend. No ninth tool. The athlete chose this over a new tool.
+Status: decided. SPEC section 11.1 updated.
+
+## 2026-10-04: Phase 3b server details
+
+- Error policy: the snapshot never fails on Garmin. A Garmin error goes into `sync.error`, a held lock into `sync.skipped: locked`, and the rest is read from stored data. `sync_garmin` and `map_exercise` raise tool errors.
+- The snapshot checks the 10-minute rule before opening a Garmin session, so repeat snapshots make no Garmin call.
+- `sync_garmin(since)` reaches back at most 60 days. Older history uses `spotter backfill` locally, which has no budget.
+- `map_exercise` refuses a pair already in the catalog and is idempotent.
+- `search_exercises(equipment)` matches the curated `load_type`, or the name while an exercise is uncurated. Every seeded row is uncurated, so names are what work today.
+- Distances are shown in km.
+- The production app lives in `spotter.mcp.asgi`. `spotter.mcp.server` builds it from settings, so importing it needs no secrets. `spotter.mcp.dev` is a no-auth server for the local inspector only.
+- `vercel.json` sets `maxDuration` 120 s: the 60 s sync budget plus metrics and reads. `.vercelignore` keeps spikes and tests out of CLI uploads.
+- Commits 2 to 4 of the plan landed as one: the server module imports both tool groups, so separate commits would not each import cleanly.
+Status: decided.
+
+## 2026-10-04: Phase 3 test sessions
+
+`spikes/seed_test_sessions.py` now seeds 8 private strength sessions over 4 weeks, alternating upper and lower days. Warm-ups stay under 60 % of the top set. Session 7 has a missed rep on the last bench set. Expected values, computed by hand from rules A.1 and A.2 and cross-checked with `engine.sets.summarize` before seeding. e1RM is `-` everywhere: nothing is curated.
+
+| # | Date | Exercise | Top set | Working sets | Reps | Volume (lb) |
+|---|---|---|---|---|---|---|
+| 1 | 2026-09-09 | Barbell Bench Press | 175 x 5 | 3 | 15 | 2625.0 |
+| 1 | 2026-09-09 | Dumbbell Row | 55 x 12 | 3 | 36 | 1980.0 |
+| 1 | 2026-09-09 | Pull-up | BW x 8 | 3 | 22 | 0.0 |
+| 2 | 2026-09-12 | Barbell Back Squat | 205 x 5 | 3 | 15 | 3075.0 |
+| 2 | 2026-09-12 | Barbell Deadlift | 255 x 5 | 2 | 10 | 2550.0 |
+| 3 | 2026-09-16 | Barbell Bench Press | 180 x 5 | 3 | 15 | 2700.0 |
+| 3 | 2026-09-16 | Dumbbell Row | 60 x 12 | 3 | 36 | 2160.0 |
+| 3 | 2026-09-16 | Pull-up | BW x 8 | 3 | 23 | 0.0 |
+| 4 | 2026-09-19 | Barbell Back Squat | 215 x 5 | 3 | 15 | 3225.0 |
+| 4 | 2026-09-19 | Barbell Deadlift | 275 x 5 | 2 | 10 | 2750.0 |
+| 5 | 2026-09-23 | Barbell Bench Press | 185 x 5 | 3 | 15 | 2775.0 |
+| 5 | 2026-09-23 | Dumbbell Row | 60 x 12 | 3 | 34 | 2040.0 |
+| 5 | 2026-09-23 | Pull-up | BW x 9 | 3 | 24 | 0.0 |
+| 6 | 2026-09-26 | Barbell Back Squat | 225 x 5 | 3 | 15 | 3375.0 |
+| 6 | 2026-09-26 | Barbell Deadlift | 295 x 5 | 2 | 10 | 2950.0 |
+| 7 | 2026-09-30 | Barbell Bench Press | 185 x 5 | 3 | 14 | 2590.0 |
+| 7 | 2026-09-30 | Dumbbell Row | 65 x 10 | 3 | 30 | 1950.0 |
+| 7 | 2026-09-30 | Pull-up | BW x 9 | 3 | 26 | 0.0 |
+| 8 | 2026-10-03 | Barbell Back Squat | 235 x 5 | 3 | 15 | 3525.0 |
+| 8 | 2026-10-03 | Barbell Deadlift | 315 x 5 | 2 | 10 | 3150.0 |
+
+Expected `strength_28d` (check run 2026-10-03 to 2026-10-06): 8 sessions.
+
+| Exercise | Exposures | Working sets | Volume (lb) | Trend |
+|---|---|---|---|---|
+| Barbell Back Squat | 4 | 12 | 13200.0 | top set 205 → 235 lb, up |
+| Barbell Bench Press | 4 | 12 | 10690.0 | top set 175 → 185 lb, up |
+| Barbell Deadlift | 4 | 8 | 11400.0 | top set 255 → 315 lb, up |
+| Dumbbell Row | 4 | 12 | 8130.0 | top set 55 → 65 lb, up |
+| Pull-up | 4 | 12 | 0.0 | top-set reps 8 → 9, up |
+
+Cleanup: `--delete` after the athlete confirms the check.
+Status: ready to seed.

@@ -21,7 +21,14 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Connection, Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from spotter.db.schema import activities, athlete, exercises, performed_sets, sync_state
+from spotter.db.schema import (
+    activities,
+    athlete,
+    exercise_aliases,
+    exercises,
+    performed_sets,
+    sync_state,
+)
 from spotter.garmin import mappers
 from spotter.sync import metrics
 from spotter.sync.stats import rebuild_activity_stats
@@ -81,10 +88,20 @@ def _upsert_activity(conn: Connection, row: dict[str, Any]) -> None:
 
 
 def _exercise_ids(conn: Connection) -> dict[tuple[str, str], int]:
+    """(garmin_category, garmin_name) -> exercise id. Exact catalog match wins over an alias."""
+    aliases = conn.execute(
+        select(
+            exercise_aliases.c.exercise_id,
+            exercise_aliases.c.garmin_category,
+            exercise_aliases.c.garmin_name,
+        )
+    )
+    ids = {(r.garmin_category, r.garmin_name): r.exercise_id for r in aliases}
     rows = conn.execute(
         select(exercises.c.id, exercises.c.garmin_category, exercises.c.garmin_name)
     )
-    return {(r.garmin_category, r.garmin_name): r.id for r in rows}
+    ids.update({(r.garmin_category, r.garmin_name): r.id for r in rows})
+    return ids
 
 
 def _store_strength(

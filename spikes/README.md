@@ -27,6 +27,8 @@ uv run spikes/push_test_workout.py --cleanup
 
 ## Checks 4 and 5: `vercel_hello/`
 
+History only. Since Phase 3b the Vercel project deploys the real server from the repo root (`api/index.py`), and `spotter-mcp.vercel.app` no longer serves this spike.
+
 1. Neon: project `spotter-mcp`, database `spotter`, branch `production`. `neon config init` writes both
    connection strings to `.env.local`. The server creates its own `spike_kv_store` table on first use.
 2. GitHub OAuth App: homepage `https://spotter-mcp.vercel.app`,

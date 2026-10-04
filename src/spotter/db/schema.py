@@ -79,6 +79,17 @@ exercises = Table(
     UniqueConstraint("garmin_category", "garmin_name"),
 )
 
+# Written by map_exercise. Sync maps a set by exact catalog match first, then by alias.
+exercise_aliases = Table(
+    "exercise_aliases",
+    metadata,
+    Column("garmin_category", Text, nullable=False),
+    Column("garmin_name", Text, nullable=False, server_default=text("''")),
+    Column("exercise_id", BigInteger, ForeignKey("exercises.id"), nullable=False),
+    Column("created_at", _timestamptz(), nullable=False, server_default=NOW),
+    PrimaryKeyConstraint("garmin_category", "garmin_name"),
+)
+
 goals = Table(
     "goals",
     metadata,

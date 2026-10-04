@@ -109,7 +109,9 @@ spotter-mcp/
       endurance.py
       plan_eval.py
     mcp/
-      server.py           # FastMCP app, auth, tool registration
+      server.py           # FastMCP server factory, auth, tool registration
+      asgi.py             # production ASGI app from settings
+      dev.py              # no-auth server for the local inspector
       auth.py             # GitHub provider + login allowlist
       instructions.md     # shipped server instructions (from coaching-rules.md Part B)
       tools/              # one module per tool group
@@ -445,7 +447,7 @@ General rules:
 
 | Tool | Input | Output |
 |---|---|---|
-| `get_training_snapshot` | `force_sync?` | Sync status; athlete profile; active plan (week X of Y, next session); readiness last 7 and 28 days with today's class; endurance summary and flags; last 3 strength sessions planned vs actual; open flags (stalls, missed sessions, unmapped exercises). |
+| `get_training_snapshot` | `force_sync?` | Sync status; athlete profile; active plan (week X of Y, next session); readiness last 7 and 28 days with today's class; endurance summary and flags; last 3 strength sessions planned vs actual; 28-day strength rollup per exercise (decisions.md); open flags (stalls, missed sessions, unmapped exercises). |
 | `get_exercise_history` | `exercise_id`, `since?`, `limit?` | Per session: date, top set, e1RM, volume, working sets, met_prescription. Plus trend. |
 | `get_readiness` | `days` | Daily rows plus baselines. |
 | `get_endurance_load` | `days` | Per activity summary plus weekly totals. |

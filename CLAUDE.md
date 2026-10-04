@@ -29,7 +29,8 @@ uv run spotter --help                    # CLI: bootstrap-login, import-tokens, 
                                          #      sync, backfill --since, rebuild-stats, strength-log
                                          #      (sync and backfill take --metrics-days)
 uv run --env-file .env.local spotter ... # same, against production (Neon)
-uv run fastmcp dev src/spotter/mcp/server.py   # local MCP inspector
+uv run fastmcp dev src/spotter/mcp/dev.py      # local MCP inspector, no auth, compose DB
+uv run uvicorn spotter.mcp.asgi:app            # production app locally (needs the auth env vars)
 ```
 
 ## Hard rules
