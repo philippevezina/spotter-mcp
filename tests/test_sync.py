@@ -74,6 +74,25 @@ class FakeClient:
         self.set_calls.append(activity_id)
         return copy.deepcopy(self.sets[activity_id])
 
+    # No daily metrics here; tests/test_metrics_sync.py covers them.
+    def hrv_range(self, start: date, end: date) -> dict[str, Any]:
+        return {}
+
+    def max_metrics_range(self, start: date, end: date) -> list[Any]:
+        return []
+
+    def body_composition_range(self, start: date, end: date) -> dict[str, Any]:
+        return {}
+
+    def training_readiness(self, day: date) -> list[dict[str, Any]]:
+        return []
+
+    def sleep(self, day: date) -> dict[str, Any]:
+        return {}
+
+    def daily_summary(self, day: date) -> dict[str, Any]:
+        return {}
+
 
 @pytest.fixture
 def catalog(db: Engine) -> Engine:
@@ -113,6 +132,8 @@ def test_first_sync(catalog: Engine) -> None:
         "activities": 3,
         "strength_sessions": 2,
         "unmapped_sets": 0,
+        "metric_days": 14,
+        "metric_day_fetches": 14,
         "partial": False,
     }
     assert client.set_calls == [3, 1]  # newest first
@@ -121,7 +142,7 @@ def test_first_sync(catalog: Engine) -> None:
         row = conn.execute(
             select(exercise_session_stats).where(exercise_session_stats.c.activity_id == 3)
         ).one()
-        state = conn.execute(select(sync_state)).one()
+        state = conn.execute(select(sync_state).where(sync_state.c.source == "activities")).one()
         local = conn.execute(
             select(activities.c.local_date).where(activities.c.garmin_activity_id == 3)
         ).scalar_one()

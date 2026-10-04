@@ -1,0 +1,25 @@
+{
+  "hrvSummaries": [
+    {
+      "baseline": null,
+      "calendarDate": "2025-10-04",
+      "createTimeStamp": "2025-10-04T11:17:38.514",
+      "feedbackPhrase": "ONBOARDING_1",
+      "lastNight5MinHigh": 70,
+      "lastNightAvg": 44,
+      "status": "NONE",
+      "weeklyAvg": null
+    },
+    {
+      "baseline": null,
+      "calendarDate": "2025-10-05",
+      "createTimeStamp": "2025-10-05T12:07:05.38",
+      "feedbackPhrase": "ONBOARDING_1",
+      "lastNight5MinHigh": 70,
+      "lastNightAvg": 52,
+      "status": "NONE",
+      "weeklyAvg": null
+    }
+  ],
+  "userProfilePk": 0
+}

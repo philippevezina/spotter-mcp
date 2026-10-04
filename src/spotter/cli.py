@@ -21,7 +21,7 @@ from spotter.garmin import tokens
 from spotter.garmin.errors import GarminError
 from spotter.garmin.mappers import STRENGTH_TYPE
 from spotter.garmin.session import garmin_session
-from spotter.sync import stats
+from spotter.sync import metrics, stats
 from spotter.sync.sync import SyncResult, run_sync
 from spotter.units import kg_to_lb
 
@@ -70,7 +70,12 @@ def _sync(args: argparse.Namespace) -> None:
     lock_engine = get_engine(get_settings().migration_url)
     with garmin_session(engine) as session:
         result = run_sync(
-            engine, session.client, full=args.full, force=args.force, lock_engine=lock_engine
+            engine,
+            session.client,
+            full=args.full,
+            force=args.force,
+            metrics_days=args.metrics_days,
+            lock_engine=lock_engine,
         )
     _print_sync(result, session.refreshed)
 
@@ -86,6 +91,7 @@ def _backfill(args: argparse.Namespace) -> None:
             full=args.full,
             force=True,
             budget_s=None,
+            metrics_days=args.metrics_days,
             lock_engine=lock_engine,
         )
     _print_sync(result, session.refreshed)
@@ -160,14 +166,28 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("seed-exercises", help="Load the Garmin exercise catalog. Idempotent.")
     p.set_defaults(func=_seed_exercises)
 
-    p = sub.add_parser("sync", help="Sync recent activities and strength sets (60 s budget).")
+    p = sub.add_parser(
+        "sync", help="Sync recent activities, strength sets and daily metrics (60 s budget)."
+    )
     p.add_argument("--force", action="store_true", help="Ignore the 10-minute minimum interval")
     p.add_argument("--full", action="store_true", help="Re-read sets of every strength session")
+    p.add_argument(
+        "--metrics-days",
+        type=int,
+        default=metrics.RANGE_DAYS,
+        help=f"Daily metrics window ending today (default {metrics.RANGE_DAYS})",
+    )
     p.set_defaults(func=_sync)
 
     p = sub.add_parser("backfill", help="Sync history since a date, with no time budget.")
-    p.add_argument("--since", required=True, help="YYYY-MM-DD")
+    p.add_argument("--since", required=True, help="YYYY-MM-DD (activities)")
     p.add_argument("--full", action="store_true", help="Re-read sets already stored")
+    p.add_argument(
+        "--metrics-days",
+        type=int,
+        default=metrics.BACKFILL_DAYS,
+        help=f"Daily metrics window ending today (default {metrics.BACKFILL_DAYS})",
+    )
     p.set_defaults(func=_backfill)
 
     p = sub.add_parser("rebuild-stats", help="Recompute exercise session stats from stored sets.")

@@ -1,0 +1,150 @@
+{
+  "avgOvernightHrv": 0,
+  "bodyBatteryChange": 0,
+  "breathingDisruptionData": [],
+  "dailySleepDTO": {
+    "ageGroup": "ADULT",
+    "autoSleepEndTimestampGMT": null,
+    "autoSleepStartTimestampGMT": null,
+    "averageRespirationValue": 0,
+    "avgHeartRate": 0,
+    "avgSleepStress": 0,
+    "awakeCount": 0,
+    "awakeSleepSeconds": 0,
+    "calendarDate": "2025-10-05",
+    "deepSleepSeconds": 0,
+    "deviceRemCapable": true,
+    "highestRespirationValue": 0,
+    "id": 0,
+    "lightSleepSeconds": 0,
+    "lowestRespirationValue": 0,
+    "napTimeSeconds": 0,
+    "nextSleepNeed": {
+      "actual": 0,
+      "baseline": 0,
+      "calendarDate": "2025-10-06",
+      "displayedForTheDay": true,
+      "feedback": "INCREASED",
+      "hrvAdjustment": "NO_DATA",
+      "napAdjustment": "NO_CHANGE",
+      "preferredActivityTracker": true,
+      "recommendedBedtimeEndMins": 0,
+      "recommendedBedtimeStartMins": 0,
+      "sleepHistoryAdjustment": "INCREASING_LOW_QUALITY",
+      "timestampGmt": "2025-10-05T18:36:06",
+      "trainingFeedback": "NO_CHANGE",
+      "userProfilePk": 0
+    },
+    "remSleepSeconds": 0,
+    "retro": false,
+    "sleepAlignment": {
+      "calendarDate": "2025-10-05",
+      "isPreferredActivityTracker": true,
+      "lastSleepMidpointMins": 0,
+      "optimalSleepWindowEndMins": null,
+      "optimalSleepWindowMidpointMins": null,
+      "optimalSleepWindowStartMins": null,
+      "sleepNeedBaselineMins": null,
+      "status": "ONBOARDING",
+      "userId": 0
+    },
+    "sleepEndTimestampGMT": 1759665646000,
+    "sleepEndTimestampLocal": 1759651246000,
+    "sleepFromDevice": true,
+    "sleepNeed": {
+      "actual": 0,
+      "baseline": 0,
+      "calendarDate": "2025-10-05",
+      "displayedForTheDay": true,
+      "feedback": "HIGHLY_INCREASED",
+      "hrvAdjustment": "NO_DATA",
+      "napAdjustment": "NO_CHANGE",
+      "preferredActivityTracker": true,
+      "recommendedBedtimeEndMins": 0,
+      "recommendedBedtimeStartMins": 0,
+      "sleepHistoryAdjustment": "NO_CHANGE",
+      "timestampGmt": "2025-10-04T16:25:46",
+      "trainingFeedback": "TODAYS_LOAD_AND_CHRONIC",
+      "userProfilePk": 0
+    },
+    "sleepQualityTypePK": null,
+    "sleepResultTypePK": null,
+    "sleepScoreFeedback": "NEGATIVE_LONG_BUT_POOR_QUALITY",
+    "sleepScoreInsight": "NEGATIVE_VERY_STRENUOUS_EXERCISE",
+    "sleepScorePersonalizedInsight": "HARD_EXERCISE_NEG_FAIR_OR_POOR_SLEEP_STRENUOUS",
+    "sleepScores": {
+      "awakeCount": {
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "POOR"
+      },
+      "deepPercentage": {
+        "idealEndInSeconds": 0,
+        "idealStartInSeconds": 0,
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "FAIR",
+        "value": 0
+      },
+      "lightPercentage": {
+        "idealEndInSeconds": 0,
+        "idealStartInSeconds": 0,
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "FAIR",
+        "value": 0
+      },
+      "overall": {
+        "qualifierKey": "FAIR",
+        "value": 58
+      },
+      "remPercentage": {
+        "idealEndInSeconds": 0,
+        "idealStartInSeconds": 0,
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "FAIR",
+        "value": 0
+      },
+      "restlessness": {
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "POOR"
+      },
+      "stress": {
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "FAIR"
+      },
+      "totalDuration": {
+        "optimalEnd": 0,
+        "optimalStart": 0,
+        "qualifierKey": "EXCELLENT"
+      }
+    },
+    "sleepStartTimestampGMT": 1759633546000,
+    "sleepStartTimestampLocal": 1759619146000,
+    "sleepTimeSeconds": 23400,
+    "sleepVersion": 0,
+    "sleepWindowConfirmationType": "enhanced_confirmed_final",
+    "sleepWindowConfirmed": true,
+    "unmeasurableSleepSeconds": 0,
+    "userProfilePK": 0
+  },
+  "hrvData": [],
+  "hrvStatus": "NONE",
+  "remSleepData": true,
+  "respirationVersion": 0,
+  "restingHeartRate": 0,
+  "restlessMomentsCount": 0,
+  "skinTempCalibrationDays": 0,
+  "skinTempDataExists": true,
+  "sleepBodyBattery": [],
+  "sleepHeartRate": [],
+  "sleepLevels": [],
+  "sleepMovement": [],
+  "sleepRestlessMoments": [],
+  "sleepStress": [],
+  "wellnessEpochRespirationAveragesList": [],
+  "wellnessEpochRespirationDataDTOList": []
+}

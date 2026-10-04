@@ -40,6 +40,7 @@ class FakeGarmin:
         self.email, self.password, self.prompt_mfa = email, password, prompt_mfa
         self.client = FakeInner()
         self.login_calls: list[str | None] = []
+        self.metric_calls: list[tuple[str, tuple[str, ...]]] = []
         type(self).instances.append(self)
 
     def login(self, tokenstore: str | None = None) -> tuple[None, None]:
@@ -65,6 +66,31 @@ class FakeGarmin:
 
     def get_activity_exercise_sets(self, activity_id: int) -> dict[str, object]:
         return {"activityId": activity_id, "exerciseSets": []}
+
+    # Daily metric reads: record (method, args) and return `metric_result`.
+    metric_result: object = None
+
+    def _metric(self, name: str, *args: str) -> object:
+        self.metric_calls.append((name, args))
+        return self.metric_result
+
+    def get_hrv_data_range(self, start: str, end: str) -> object:
+        return self._metric("get_hrv_data_range", start, end)
+
+    def get_max_metrics_range(self, start: str, end: str) -> object:
+        return self._metric("get_max_metrics_range", start, end)
+
+    def get_body_composition(self, startdate: str, enddate: str) -> object:
+        return self._metric("get_body_composition", startdate, enddate)
+
+    def get_training_readiness(self, cdate: str) -> object:
+        return self._metric("get_training_readiness", cdate)
+
+    def get_sleep_data(self, cdate: str) -> object:
+        return self._metric("get_sleep_data", cdate)
+
+    def get_user_summary(self, cdate: str) -> object:
+        return self._metric("get_user_summary", cdate)
 
 
 @pytest.fixture
@@ -149,3 +175,38 @@ def test_exercise_catalog() -> None:
     assert len(catalog) == 1527
     assert len({(e.category, e.name) for e in catalog}) == 1527
     assert all(e.category and e.name and e.display_name for e in catalog)
+
+
+START, END, DAY = date(2026, 9, 21), date(2026, 10, 4), date(2026, 10, 3)
+METRIC_READS = [
+    ("hrv_range", (START, END), "get_hrv_data_range", {}),
+    ("max_metrics_range", (START, END), "get_max_metrics_range", None),
+    ("body_composition_range", (START, END), "get_body_composition", {}),
+    ("training_readiness", (DAY,), "get_training_readiness", []),
+    ("sleep", (DAY,), "get_sleep_data", {}),
+    ("daily_summary", (DAY,), "get_user_summary", {}),
+]
+
+
+@pytest.mark.parametrize(("method", "args", "library", "empty"), METRIC_READS)
+def test_metric_reads_pass_iso_dates(
+    fake: type[FakeGarmin], method: str, args: tuple[date, ...], library: str, empty: object
+) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    assert getattr(session, method)(*args) == empty  # library returned None
+    fake.metric_result = {"ok": 1}
+    assert getattr(session, method)(*args) == {"ok": 1}
+    iso = tuple(d.isoformat() for d in args)
+    assert fake.instances[0].metric_calls == [(library, iso), (library, iso)]
+
+
+def test_metric_read_maps_errors(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    fake.metric_result = None
+
+    def boom(*_: str) -> object:
+        raise garminconnect.GarminConnectTooManyRequestsError("429")
+
+    fake.get_sleep_data = boom  # type: ignore[method-assign,assignment]
+    with pytest.raises(GarminRateLimited):
+        session.sleep(DAY)

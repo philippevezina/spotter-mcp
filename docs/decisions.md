@@ -103,10 +103,10 @@ Status: decided. Works on Vercel: client registration, login and tokens survived
 - Server `date.today()` is UTC on Vercel. Phase 3 must compute dates in America/Toronto.
 Status: decided.
 
-## 2026-10-04: Allowlist on GitHub user id, not login (proposed)
+## 2026-10-04: Allowlist on GitHub user id, not login
 
 Why: `login` changes if the GitHub account is renamed, which would lock the athlete out. The numeric `sub` claim is permanent. `whoami` returns both.
-Status: proposed for Phase 3. Spike keeps `ALLOWED_GITHUB_LOGIN`.
+Status: decided for Phase 3. The server checks `sub` against `ALLOWED_GITHUB_USER_ID`. `ALLOWED_GITHUB_LOGIN` is removed from the server config. The spike keeps it.
 
 ## 2026-10-04: One Garmin token copy; import the spike token in Phase 1
 
@@ -201,3 +201,78 @@ Exit criteria met on 2026-10-04, before cleanup:
 - A second `spotter sync` reports `skipped: recent`. `--force` re-reads only the 2-day overlap, and row counts stay unchanged (4 / 24 / 7).
 
 The athlete confirmed the check, and the test sessions are deleted. Phase 3 may start.
+
+## 2026-10-04: Phase 3 ships as two PRs
+
+- 3a: daily metrics fixtures, adapter, mapper and sync; `engine.readiness`, `engine.endurance`, and the exercise trend. No server.
+- 3b: FastMCP server, auth, the eight read and admin tools, deploy from the repo root, and the phone exit check.
+Why: CLAUDE.md keeps PRs to one phase or less. 3a can be checked locally (pytest, a `spotter sync` filling `daily_metrics` in Neon) before anything is deployed.
+Status: decided.
+
+## 2026-10-04: `map_exercise` persists through `exercise_aliases`
+
+Why: sync rewrites the sets of recent activities and maps them by exact `(garmin_category, garmin_name)`. A mapping stored only on `performed_sets` would be undone by the next sync.
+Decision: a new table, `exercise_aliases (garmin_category, garmin_name) -> exercise_id`, in one Alembic migration. Sync tries the exact catalog match first, then the alias. `map_exercise` writes the alias, remaps the stored sets with that pair, and rebuilds the stats of the affected activities.
+Alternatives rejected: a new `exercises` row per unknown pair (history stays split from the real exercise); keeping the old `exercise_id` on rewrite (activities not yet stored still arrive unmapped).
+Status: decided. SPEC section 7 updated.
+
+## 2026-10-04: Daily metrics sync window
+
+Finding: in garminconnect 0.3.17, HRV, Body Battery, max metrics and body composition take a date range. Sleep, training readiness, resting HR and training status take one date. Re-reading 14 days of per-day calls on every sync is about 56 calls. The call set was revised after recording fixtures (see "Daily metrics call set" below).
+Decision:
+- Range calls cover the last 14 days on every sync.
+- Per-day calls cover the last 3 days, plus any day in the 14-day window with no stored row.
+- Metrics share the activity sync's lock and its 60 s budget. Activities run first. Metrics keep their own `sync_state` row (`daily_metrics`).
+- `spotter backfill` syncs metrics for the last 28 days by default (the longest readiness window), not the whole `--since` range.
+Why: values settle within a day or two after sleep. This cuts a sync to about 12 to 15 calls after the first one and lowers the 429 risk.
+Status: decided. SPEC section 9 updated.
+
+## 2026-10-04: Endurance interference window
+
+Rule A.7 says "in the 48 h before" a planned lower-body day. Planned days have a date, not a time.
+Decision: count activities whose local date is the planned date or one of the 2 dates before it. Same-day activities count because a morning run can precede an evening lift.
+Status: decided.
+
+## 2026-10-04: Phase 3 server details
+
+- OAuth client storage moves to a new `oauth_store` table owned by `PostgreSQLStore`. The athlete reconnects the connector once. `spike_kv_store` is dropped after the switch.
+- The Vercel project's root directory moves from `spikes/vercel_hello` to the repo root. A preview deploy confirms the `src/` package installs from `uv.lock` before production.
+- Phase 3 ships a short interim instruction text (snapshot first, lb only, read-only). Part B ships in Phase 6.
+Status: decided.
+
+## 2026-10-04: Phase 3 exit check uses seeded test sessions
+
+Why: Neon holds one run and no strength history, so "summarize my last 4 weeks of training" would have almost nothing to check.
+Decision: extend `spikes/seed_test_sessions.py` to create about 6 to 8 private strength sessions spread over 4 weeks. Run the exit check against them, then delete them with `--delete`, as in Phase 2. Daily metrics come from the athlete's watch.
+Status: decided.
+
+## 2026-10-04: Daily metrics call set
+
+Finding (fixtures recorded 2026-10-04): the daily summary (`get_user_summary`) carries resting HR, Body Battery high and low, and average stress for the day. The morning readiness entry carries acute load.
+Decision:
+- Range calls: `get_hrv_data_range`, `get_max_metrics_range`, `get_body_composition`.
+- Per-day calls: `get_sleep_data`, `get_training_readiness`, `get_user_summary`.
+- Dropped: `get_rhr_day` and `get_body_battery` (covered by the summary), `get_morning_training_readiness` (it filters the readiness list client-side, so Spotter picks the `AFTER_WAKEUP_RESET` entry itself, else the first).
+- Deferred: `get_training_status`. Every field was null on this account, so the populated shape of load balance is unknown. `load_balance` stays null until a recording shows it. No engine rule reads it.
+- A negative `averageStressLevel` means not enough data and is stored as null. HRV status `NONE` (baseline still building) is stored as null, so readiness reports it as unknown.
+Status: decided. SPEC section 8.2 updated.
+
+## 2026-10-04: Metric fixtures carry fake numbers
+
+Why: the repo is public, and the fixtures can be tied to the athlete through the repo owner. The athlete chose fake values over real ones.
+How: `anonymize_fixture.py --metrics` keeps Garmin's real structure, enum labels and shifted timestamps. Every other number becomes 0, time series are emptied, and the fields Spotter maps get fixed fake values. It also replaces every user or profile id key and nested activity names, and refuses to write a file if a real id survives. Two leaks were caught before any commit: the user id under `userId`/`userProfilePK`-style keys in 7 files, and an event name inside Body Battery events.
+Remaining real data: the time of day in sleep timestamps (dates shifted by 364 days).
+Status: decided.
+
+## 2026-10-04: Onboarding gaps in the metric fixtures
+
+The watch started recording on 2026-10-02, so Garmin was still building baselines. HRV `baseline`, readiness `score` and `acuteLoad`, and all of `get_training_status` were null.
+Effect: `hrv_baseline_low/high` map from `baseline.balancedLow/balancedUpper`, Garmin's documented shape, tested with a constructed entry. Re-record with `spikes/record_fixtures.py --metrics` once HRV status leaves `NONE` (about 3 weeks of wear), confirm the baseline keys, and add the training status mapping.
+Status: open. Revisit before Phase 4 relies on readiness.
+
+## Phase 3a results
+
+Checked on 2026-10-04:
+- `uv run pytest` green (197 tests). The engine has 100 % branch coverage. ruff and mypy are clean.
+- `spotter sync --force` against Neon: 14 metric days, all fetched per-day, `partial: false`, 9.3 s in total. Data starts 2026-10-02, when the watch started recording. Values are plausible (resting HR 58 to 64, overnight HRV 31 to 32 ms, sleep scores 64 and 77). HRV status and readiness are null, as expected while onboarding.
+- A second `sync` reports `skipped: recent`. `--force` fetches only the last 3 days per-day.
