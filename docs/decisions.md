@@ -107,3 +107,10 @@ Status: decided.
 
 Why: `login` changes if the GitHub account is renamed, which would lock the athlete out. The numeric `sub` claim is permanent. `whoami` returns both.
 Status: proposed for Phase 3. Spike keeps `ALLOWED_GITHUB_LOGIN`.
+
+## 2026-10-04: One Garmin token copy; import the spike token in Phase 1 (proposed)
+
+Why: an env var is read-only at runtime, so a server copy of the token can never save a refresh. If Garmin rotates refresh tokens, two copies (Mac and Vercel) break each other, and recovery needs a new login with 429 risk.
+Done: `GARMIN_TOKENS_JSON` removed from Vercel after Phase 0. The only live copy is `spikes/.tokens/garmin_tokens.json` on the Mac.
+Proposed for Phase 1: add `spotter import-tokens <path>` to load that file into `garmin_tokens` (encrypted), and use it instead of a fresh `bootstrap-login`. Keep `bootstrap-login` for when the token dies.
+Status: proposed.
