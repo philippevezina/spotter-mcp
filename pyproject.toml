@@ -8,8 +8,10 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.13",
     "cryptography>=43",
+    "fastmcp==4.0.10",
     "garminconnect[workout]==0.3.17",
     "psycopg[binary]>=3.2",
+    "py-key-value-aio[postgresql]==0.4.6",
     "pydantic-settings>=2.4",
     "sqlalchemy>=2.0.30",
 ]

@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     database_url_unpooled: str | None = None
     garmin_token_key: SecretStr | None = None
 
+    # MCP server only (SPEC section 13). Optional so the CLI runs without them.
+    base_url: str | None = None
+    github_client_id: str | None = None
+    github_client_secret: SecretStr | None = None
+    allowed_github_user_id: str | None = None
+    jwt_signing_key: SecretStr | None = None
+    storage_encryption_key: SecretStr | None = None
+
     @property
     def db_url(self) -> str:
         return sqlalchemy_url(self.database_url)
