@@ -15,6 +15,7 @@ from sqlalchemy import Engine, func, select, text, update
 
 from spotter.db.schema import (
     activities,
+    exercise_aliases,
     exercise_session_stats,
     exercises,
     performed_sets,
@@ -257,6 +258,41 @@ def test_unmapped_exercise(db: Engine) -> None:
     with db.connect() as conn:
         mapped = conn.execute(select(performed_sets.c.exercise_id)).scalars().all()
     assert mapped == [None, None]
+
+
+def test_alias_maps_unknown_pair_on_resync(db: Engine) -> None:
+    with db.begin() as conn:
+        seed_exercises(conn, [CatalogEntry("Bench (alias target)", "BENCH_PRESS", "OTHER")])
+        target = conn.execute(select(exercises.c.id)).scalar_one()
+        conn.execute(
+            exercise_aliases.insert().values(
+                garmin_category=BENCH[0], garmin_name=BENCH[1], exercise_id=target
+            )
+        )
+    result = sync(db, FakeClient([strength(1, "2026-10-03 22:00:00")]))
+    assert result.unmapped_sets == 0
+    with db.connect() as conn:
+        mapped = conn.execute(select(performed_sets.c.exercise_id)).scalars().all()
+    assert mapped == [target, target]
+    assert count(db, exercise_session_stats) == 1
+
+
+def test_catalog_match_wins_over_alias(catalog: Engine) -> None:
+    with catalog.begin() as conn:
+        bench = conn.execute(select(exercises.c.id)).scalar_one()
+        seed_exercises(conn, [CatalogEntry("Other", "BENCH_PRESS", "OTHER")])
+        other = conn.execute(
+            select(exercises.c.id).where(exercises.c.garmin_name == "OTHER")
+        ).scalar_one()
+        conn.execute(
+            exercise_aliases.insert().values(
+                garmin_category=BENCH[0], garmin_name=BENCH[1], exercise_id=other
+            )
+        )
+    sync(catalog, FakeClient([strength(1, "2026-10-03 22:00:00")]))
+    with catalog.connect() as conn:
+        mapped = set(conn.execute(select(performed_sets.c.exercise_id)).scalars())
+    assert mapped == {bench}
 
 
 def test_error_mid_run_keeps_committed_work(catalog: Engine) -> None:
