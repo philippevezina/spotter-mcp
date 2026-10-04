@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import date
 from typing import ClassVar
 
 import garminconnect
 import pytest
 
 from spotter.garmin import client
-from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited
+from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited, GarminUnavailable
 
 TOKEN = json.dumps({"di_token": "t1", "di_refresh_token": "r1", "di_client_id": "c"})
 REFRESHED = TOKEN.replace("t1", "t2")
@@ -56,6 +57,14 @@ class FakeGarmin:
         if self.read_error:
             raise self.read_error
         return "statute_us"
+
+    def get_activities_by_date(self, startdate: str, enddate: str) -> list[dict[str, object]]:
+        if self.read_error:
+            raise self.read_error
+        return [{"activityId": 1, "range": [startdate, enddate]}]
+
+    def get_activity_exercise_sets(self, activity_id: int) -> dict[str, object]:
+        return {"activityId": activity_id, "exerciseSets": []}
 
 
 @pytest.fixture
@@ -119,6 +128,20 @@ def test_check_maps_errors(fake: type[FakeGarmin]) -> None:
     fake.read_error = garminconnect.GarminConnectAuthenticationError("401")
     with pytest.raises(GarminAuthExpired):
         session.check()
+
+
+def test_reads_pass_iso_dates(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    acts = session.activities_by_date(date(2026, 1, 1), date(2026, 10, 4))
+    assert acts == [{"activityId": 1, "range": ["2026-01-01", "2026-10-04"]}]
+    assert session.exercise_sets(7) == {"activityId": 7, "exerciseSets": []}
+
+
+def test_connection_error_is_unavailable(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    fake.read_error = garminconnect.GarminConnectConnectionError("500")
+    with pytest.raises(GarminUnavailable):
+        session.activities_by_date(date(2026, 1, 1), date(2026, 1, 2))
 
 
 def test_exercise_catalog() -> None:

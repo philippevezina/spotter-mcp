@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import garminconnect
 from garminconnect import exercises as garmin_exercises
 
-from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited
+from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited, GarminUnavailable
 
 
 @dataclass(frozen=True)
@@ -67,11 +68,29 @@ class GarminClient:
         dumped: str = self._api.client.dumps()
         return dumped
 
-    def check(self) -> None:
-        """One cheap authenticated read, to prove the session works."""
+    def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run one library call and translate its errors into domain errors."""
         try:
-            self._api.get_unit_system()
+            return fn(*args, **kwargs)
         except garminconnect.GarminConnectTooManyRequestsError as exc:
             raise GarminRateLimited("Garmin returned 429. Try again later.") from exc
         except garminconnect.GarminConnectAuthenticationError as exc:
             raise GarminAuthExpired() from exc
+        except garminconnect.GarminConnectConnectionError as exc:
+            raise GarminUnavailable("Garmin could not be reached. Try again later.") from exc
+
+    def check(self) -> None:
+        """One cheap authenticated read, to prove the session works."""
+        self._call(self._api.get_unit_system)
+
+    def activities_by_date(self, start: date, end: date) -> list[dict[str, Any]]:
+        """Activity summaries of every type in [start, end], newest first. Paginates."""
+        result: list[dict[str, Any]] = self._call(
+            self._api.get_activities_by_date, start.isoformat(), end.isoformat()
+        )
+        return result or []
+
+    def exercise_sets(self, activity_id: int) -> dict[str, Any]:
+        """Sets of one strength activity. Weights in grams."""
+        result: dict[str, Any] = self._call(self._api.get_activity_exercise_sets, activity_id)
+        return result or {}

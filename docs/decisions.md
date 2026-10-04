@@ -135,3 +135,69 @@ Status: decided.
 ## Phase 1 results
 
 Exit criteria met on 2026-10-04: `uv run pytest` green on the compose Postgres; migration applied to Neon; `exercises` has 1,527 rows; the Phase 0 token was imported into `garmin_tokens` and `spotter garmin-check` passed. The Mac copy (`spikes/.tokens/garmin_tokens.json`) is deleted, so Neon holds the only live token. The Phase 0 spike scripts no longer have a token to read. Phase 2 may start.
+
+## 2026-10-04: Phase 2 scope: daily metrics move to Phase 3
+
+Why: Phase 2's exit criteria cover strength history only, and the daily-metrics endpoints had no fixtures. Readiness (Phase 3) is the only consumer. Phase 2 syncs activity summaries of every type plus strength sets.
+Status: decided. SPEC sections 9 and 15 updated.
+
+## 2026-10-04: e1RM stays null until curation
+
+Rule A.2 applies as written: `best_e1rm_kg` only for `e1rm_eligible` exercises, and every seeded exercise is `false` until Phase 4 curation. `spotter rebuild-stats [--exercise-id N]` (and `stats.rebuild_all`) recomputes stats after curation or remapping. Rebuilds upsert on `(activity_id, exercise_id)`, so Phase 5 links survive.
+Status: decided.
+
+## 2026-10-04: Sync mechanics
+
+- Lock: `pg_try_advisory_lock` held on a dedicated connection for the whole run. The CLI opens it on `DATABASE_URL_UNPOOLED`: Neon's pooler runs in transaction mode, where session locks are unsafe. A dropped connection releases the lock, so a killed function cannot leave it held.
+- Window: `--since`, else `cursor.synced_through` minus 2 days, else the last 28 days. It ends today in the athlete's time zone.
+- One `get_activities_by_date` call lists the window (the library paginates). Non-strength activities are upserted from it, with no extra call.
+- Strength sets are fetched newest first when the activity is new, dated within the last 2 days (to catch edits made later in the app), or `--full`. The activity row, a replace-all of its sets, and its stats commit together, so a strength activity row always has its sets.
+- The 60 s budget is checked before each set fetch. When it runs out, the run returns `partial: true`. The cursor and `last_synced_at` move only on a complete run, and a partial run resumes because stored activities are skipped.
+- Less than 10 minutes since the last complete run: skipped unless `force`. `backfill` always forces and has no budget.
+- Activities deleted in Garmin are not detected. Accepted for v1.
+Status: decided.
+
+## 2026-10-04: Mapping details
+
+- `local_date` is `startTimeGMT` converted to the athlete's time zone (athlete row, else America/Toronto), not Garmin's `startTimeLocal`, so it agrees with scheduled dates while travelling.
+- Set `startTime` is GMT (it matches the activity's `startTimeGMT`).
+- Only ACTIVE sets are stored, with `set_index = messageIndex`. 0-rep sets are stored and ignored by stats.
+- Exercise mapping is an exact `(category, name)` match. The seeded catalog has no category-only rows, so there is no fallback. Unmatched sets keep `exercise_id` null and count as `unmapped_sets`.
+- `perceived_effort` and `feel` store Garmin's `directWorkoutRpe` and `directWorkoutFeel` as given (0 to 100 scales).
+- Working sets with no load anywhere in the session (bodyweight) all count. Top set is the heaviest, then most reps. An exercise with no working set gets no stats row.
+Status: decided.
+
+## 2026-10-04: Phase 2 test sessions
+
+The account had no real strength history: the Phase 0 bench session (24606995677) is no longer in Garmin. The only other activity is one run. `spikes/seed_test_sessions.py` created 3 private manual strength activities with sets. Garmin accepts `set_activity_exercise_sets` on a manual activity, and every set read back at the right lb.
+
+| Session | Garmin id | Date |
+|---|---|---|
+| Spotter test 1 | 24607983009 | 2026-09-28 |
+| Spotter test 2 | 24607983571 | 2026-09-30 |
+| Spotter test 3 | 24607983681 | 2026-10-02 |
+
+Expected stats, computed by hand from coaching rules A.1 and A.2 before syncing (e1RM is `-` everywhere: nothing is curated):
+
+| Session | Exercise | Sets logged (lb x reps) | Top set | Working sets | Reps | Volume (lb) |
+|---|---|---|---|---|---|---|
+| 1 | Barbell Bench Press | 95x8, 185x5, 185x5, 185x4 | 185 x 5 | 3 | 14 | 2590.0 |
+| 1 | Barbell Back Squat | 135x5, 225x5, 225x5 | 225 x 5 | 3 (135 is exactly 60 %) | 15 | 2925.0 |
+| 1 | Pull-up | BWx8, BWx8, BWx6 | BW x 8 | 3 | 22 | 0.0 |
+| 2 | Barbell Bench Press | 190x5, 190x5, 190x5, 190x0 | 190 x 5 | 3 | 15 | 2850.0 |
+| 2 | Dumbbell Row | 60x12, 60x12, 60x10 | 60 x 12 | 3 | 34 | 2040.0 |
+| 3 | Barbell Back Squat | 135x5, 245x5, 245x5, 245x3 | 245 x 5 | 3 | 13 | 3185.0 |
+| 3 | Barbell Deadlift | 135x5, 225x3, 315x5 | 315 x 5 | 2 | 8 | 2250.0 |
+
+Cleanup: `spikes/seed_test_sessions.py --delete` removed the 3 activities from Garmin and their rows from Neon on 2026-10-04, after the athlete confirmed the check.
+Status: done. Neon now holds 1 activity (the run) and no strength history.
+
+## Phase 2 results
+
+Exit criteria met on 2026-10-04, before cleanup:
+- `uv run pytest` green (107 tests). The engine has 100 % branch coverage. ruff and mypy are clean.
+- `spotter backfill --since 2026-01-01` against Neon: 4 activities (3 strength, 1 run), 24 sets, 0 unmapped, `partial: false`. That is the account's full history.
+- `spotter strength-log` shows every set at the logged lb value, and all 7 stats rows match the hand-computed table above.
+- A second `spotter sync` reports `skipped: recent`. `--force` re-reads only the 2-day overlap, and row counts stay unchanged (4 / 24 / 7).
+
+The athlete confirmed the check, and the test sessions are deleted. Phase 3 may start.

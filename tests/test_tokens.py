@@ -10,7 +10,9 @@ from spotter.db.schema import garmin_tokens
 from spotter.garmin import tokens
 from spotter.garmin.errors import TokenKeyInvalid
 
-TOKEN = json.dumps({"di_token": "t1", "di_refresh_token": "r1", "di_client_id": "c"})
+# Long values: a 2-character secret appears in base64 ciphertext by chance (~2 % of runs).
+REFRESH = "refresh-token-plaintext-marker"
+TOKEN = json.dumps({"di_token": "t1", "di_refresh_token": REFRESH, "di_client_id": "c"})
 
 
 def test_round_trip_is_encrypted(db: Engine, token_key: str) -> None:
@@ -18,7 +20,7 @@ def test_round_trip_is_encrypted(db: Engine, token_key: str) -> None:
         tokens.save_tokens(conn, TOKEN, token_key)
     with db.connect() as conn:
         stored = conn.execute(select(garmin_tokens.c.ciphertext)).scalar_one()
-        assert b"r1" not in bytes(stored)
+        assert REFRESH.encode() not in bytes(stored)
         assert tokens.load_tokens(conn, token_key) == TOKEN
 
 

@@ -91,14 +91,18 @@ spotter-mcp/
     migrations/           # Alembic
     garmin/
       client.py           # only module that imports garminconnect
-      errors.py           # domain errors (auth expired, 429, bad token key)
+      errors.py           # domain errors (auth expired, 429, unavailable, bad token key)
       tokens.py           # load/save encrypted tokens in Postgres
+      session.py          # token-backed session that saves a refresh on exit
       mappers.py          # Garmin JSON -> domain rows
       workouts.py         # domain prescription -> Garmin StrengthWorkout
     sync/
       sync.py             # incremental sync with time budget and lock
       stats.py            # exercise_session_stats derivation
     engine/
+      rules.py            # every threshold from coaching-rules.md Part A
+      types.py
+      sets.py             # working sets and per-exercise session summary
       e1rm.py
       progression.py
       readiness.py
@@ -109,7 +113,8 @@ spotter-mcp/
       auth.py             # GitHub provider + login allowlist
       instructions.md     # shipped server instructions (from coaching-rules.md Part B)
       tools/              # one module per tool group
-    cli.py                # bootstrap-login, import-tokens, garmin-check, seed-exercises, backfill, sync
+    cli.py                # bootstrap-login, import-tokens, garmin-check, seed-exercises,
+                          # sync, backfill, rebuild-stats, strength-log
   tests/
     fixtures/garmin/      # recorded, anonymized Garmin responses
   spikes/                 # Phase 0 throwaway scripts
@@ -395,11 +400,11 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 ## 9. Sync (`spotter.sync`)
 
 - Triggered by `get_training_snapshot` and `sync_garmin`.
-- Takes `pg_try_advisory_lock`. If another sync holds it, skip and use current data.
-- Time budget of 60 s per call. Activities newest first since `sync_state.cursor`. Stop when the budget is spent and report `partial: true`.
+- Takes `pg_try_advisory_lock` on a dedicated connection to the unpooled URL (Neon's pooler is in transaction mode). If another sync holds it, skip and use current data.
+- Time budget of 60 s per call. Activities newest first since `sync_state.cursor` minus a 2-day overlap. Stop when the budget is spent and report `partial: true`. The cursor moves only on a complete run. Details in decisions.md ("Sync mechanics").
 - For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)`, recompute `exercise_session_stats`.
 - Link a strength activity to the `scheduled_session` on the same local date with status `pushed` (Garmin's workout id on the activity, if present, takes priority). Set status `completed`.
-- Daily metrics: last 14 days on each sync (values get revised after sleep), upsert by date.
+- Daily metrics (Phase 3): last 14 days on each sync (values get revised after sleep), upsert by date.
 - Backfill: `spotter backfill --since 2026-01-01` runs locally against the production database, with no time limit.
 
 ## 10. Engine (`spotter.engine`)
@@ -526,6 +531,7 @@ Exit: `uv run pytest` green; tokens stored in Neon (imported from the Phase 0 to
 - `spotter.sync` with advisory lock, time budget, cursor.
 - `spotter.engine.e1rm` and `spotter.sync.stats`.
 - `spotter backfill --since` run locally against Neon.
+- Activities of every type are synced; daily metrics move to Phase 3 (decisions.md).
 
 Exit: production database holds full strength history with correct lb values when displayed; stats match a manual check on 3 sessions.
 
@@ -533,6 +539,7 @@ Exit: production database holds full strength history with correct lb values whe
 
 - FastMCP server, auth with allowlist, Postgres-backed client storage.
 - Tools: `get_training_snapshot`, `get_exercise_history`, `get_readiness`, `get_endurance_load`, `get_plan`, `search_exercises`, `sync_garmin`, `map_exercise`.
+- Daily metrics sync (SPEC section 9) with recorded fixtures for the section 8.2 metric calls.
 - `spotter.engine.readiness` and `spotter.engine.endurance`.
 - Deploy, add connector, test from phone.
 

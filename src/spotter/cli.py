@@ -6,16 +6,24 @@ import argparse
 import getpass
 import sys
 from collections.abc import Sequence
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import func, select
 
-from spotter.db.schema import exercises
+from spotter.config import get_settings
+from spotter.db.schema import activities, exercise_session_stats, exercises, performed_sets
 from spotter.db.seed import seed_exercises
 from spotter.db.session import get_engine
 from spotter.garmin import client as garmin_client
 from spotter.garmin import tokens
-from spotter.garmin.errors import GarminError, GarminTokensMissing
+from spotter.garmin.errors import GarminError
+from spotter.garmin.mappers import STRENGTH_TYPE
+from spotter.garmin.session import garmin_session
+from spotter.sync import stats
+from spotter.sync.sync import SyncResult, run_sync
+from spotter.units import kg_to_lb
 
 
 def _bootstrap_login(_: argparse.Namespace) -> None:
@@ -38,17 +46,10 @@ def _import_tokens(args: argparse.Namespace) -> None:
 
 
 def _garmin_check(_: argparse.Namespace) -> None:
-    engine = get_engine()
-    with engine.connect() as conn:
-        before = tokens.load_tokens(conn)
-    if before is None:
-        raise GarminTokensMissing()
-    session = garmin_client.GarminClient.from_tokens(before)
-    session.check()
-    with engine.begin() as conn:
-        refreshed = tokens.save_if_changed(conn, before, session.dumps())
+    with garmin_session(get_engine()) as session:
+        session.client.check()
     print("ok")
-    print(f"refreshed: {str(refreshed).lower()}")
+    print(f"refreshed: {str(session.refreshed).lower()}")
 
 
 def _seed_exercises(_: argparse.Namespace) -> None:
@@ -56,6 +57,83 @@ def _seed_exercises(_: argparse.Namespace) -> None:
         inserted = seed_exercises(conn, garmin_client.exercise_catalog())
         total = conn.execute(select(func.count()).select_from(exercises)).scalar_one()
     print(f"inserted: {inserted}, total: {total}")
+
+
+def _print_sync(result: SyncResult, refreshed: bool) -> None:
+    for key, value in result.as_dict().items():
+        print(f"{key}: {'' if value is None else str(value).lower()}")
+    print(f"tokens_refreshed: {str(refreshed).lower()}")
+
+
+def _sync(args: argparse.Namespace) -> None:
+    engine = get_engine()
+    lock_engine = get_engine(get_settings().migration_url)
+    with garmin_session(engine) as session:
+        result = run_sync(
+            engine, session.client, full=args.full, force=args.force, lock_engine=lock_engine
+        )
+    _print_sync(result, session.refreshed)
+
+
+def _backfill(args: argparse.Namespace) -> None:
+    engine = get_engine()
+    lock_engine = get_engine(get_settings().migration_url)
+    with garmin_session(engine) as session:
+        result = run_sync(
+            engine,
+            session.client,
+            since=date.fromisoformat(args.since),
+            full=args.full,
+            force=True,
+            budget_s=None,
+            lock_engine=lock_engine,
+        )
+    _print_sync(result, session.refreshed)
+
+
+def _rebuild_stats(args: argparse.Namespace) -> None:
+    with get_engine().begin() as conn:
+        rebuilt = stats.rebuild_all(conn, exercise_id=args.exercise_id)
+    print(f"activities rebuilt: {rebuilt}")
+
+
+def _lb(kg: Decimal | None) -> str:
+    return "BW" if kg is None else f"{kg_to_lb(kg)} lb"
+
+
+def _strength_log(args: argparse.Namespace) -> None:
+    """Recent strength sessions in lb: every set, then the derived stats."""
+    with get_engine().connect() as conn:
+        sessions = conn.execute(
+            select(activities.c.garmin_activity_id, activities.c.local_date)
+            .where(activities.c.type == STRENGTH_TYPE)
+            .order_by(activities.c.start_time.desc())
+            .limit(args.limit)
+        ).all()
+        for s in sessions:
+            print(f"{s.local_date}  activity {s.garmin_activity_id}")
+            sets = conn.execute(
+                select(performed_sets, exercises.c.display_name)
+                .outerjoin(exercises, exercises.c.id == performed_sets.c.exercise_id)
+                .where(performed_sets.c.activity_id == s.garmin_activity_id)
+                .order_by(performed_sets.c.set_index)
+            ).all()
+            for p in sets:
+                name = p.display_name or f"{p.garmin_category}/{p.garmin_name} (unmapped)"
+                print(f"  set {p.set_index:>2}  {name}: {p.reps} x {_lb(p.weight_kg)}")
+            rows = conn.execute(
+                select(exercise_session_stats, exercises.c.display_name)
+                .join(exercises, exercises.c.id == exercise_session_stats.c.exercise_id)
+                .where(exercise_session_stats.c.activity_id == s.garmin_activity_id)
+                .order_by(exercises.c.display_name)
+            ).all()
+            for r in rows:
+                e1rm = "-" if r.best_e1rm_kg is None else _lb(r.best_e1rm_kg)
+                print(
+                    f"  stats  {r.display_name}: top {_lb(r.top_set_weight_kg)} x {r.top_set_reps}"
+                    f", working sets {r.working_sets}, reps {r.total_reps}"
+                    f", volume {kg_to_lb(r.volume_kg)} lb, e1rm {e1rm}"
+                )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,6 +159,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("seed-exercises", help="Load the Garmin exercise catalog. Idempotent.")
     p.set_defaults(func=_seed_exercises)
+
+    p = sub.add_parser("sync", help="Sync recent activities and strength sets (60 s budget).")
+    p.add_argument("--force", action="store_true", help="Ignore the 10-minute minimum interval")
+    p.add_argument("--full", action="store_true", help="Re-read sets of every strength session")
+    p.set_defaults(func=_sync)
+
+    p = sub.add_parser("backfill", help="Sync history since a date, with no time budget.")
+    p.add_argument("--since", required=True, help="YYYY-MM-DD")
+    p.add_argument("--full", action="store_true", help="Re-read sets already stored")
+    p.set_defaults(func=_backfill)
+
+    p = sub.add_parser("rebuild-stats", help="Recompute exercise session stats from stored sets.")
+    p.add_argument("--exercise-id", type=int, help="Only sessions with this exercise")
+    p.set_defaults(func=_rebuild_stats)
+
+    p = sub.add_parser("strength-log", help="Show recent strength sessions and stats in lb.")
+    p.add_argument("--limit", type=int, default=3)
+    p.set_defaults(func=_strength_log)
     return parser
 
 

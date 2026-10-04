@@ -4,6 +4,7 @@
 """Anonymize raw Garmin dumps from spikes/out/ into tests/fixtures/garmin/.
 
     uv run spikes/anonymize_fixture.py <activity_id>
+    uv run spikes/anonymize_fixture.py --list   # from spikes/out/activities_list.json
 
 - Drops keys that identify the person, device or place.
 - Replaces ids with stable fakes.
@@ -75,7 +76,32 @@ def strings(obj: Any, path: str = "") -> list[str]:
     return [f"{path} = {obj!r}"] if isinstance(obj, str) else []
 
 
+LIST_TYPES = ("running", "cycling")
+
+
+def from_list() -> None:
+    """First activity of each LIST_TYPES type -> <type>_activity_summary.json. Names replaced."""
+    listing = json.loads((OUT / "activities_list.json").read_text())
+    written = []
+    for type_key in LIST_TYPES:
+        found = next((a for a in listing if a["activityType"]["typeKey"] == type_key), None)
+        if found is None:
+            print(f"no {type_key} activity in the list, skipping")
+            continue
+        data = clean({**found, "activityName": type_key.title(), "description": None})
+        dst = f"{type_key}_activity_summary.json"
+        (FIXTURES / dst).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        written.append(dst)
+        print(f"\n== {dst}: review remaining strings ==")
+        for line in sorted(set(strings(data))):
+            print(f"  {line[:140]}")
+    print(f"\nWrote {written}. Review the strings above before committing.")
+
+
 def main() -> None:
+    if sys.argv[1:] == ["--list"]:
+        from_list()
+        return
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
     aid = sys.argv[1]

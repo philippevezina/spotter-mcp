@@ -19,3 +19,4 @@ spikes/out/
 .DS_Store
 .neon
 node_modules/
+.coverage
