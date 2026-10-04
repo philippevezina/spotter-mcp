@@ -46,8 +46,10 @@ Status: decided. Check GitHub repo name availability before creating it.
 | 1. Local login (MFA?) | Pass (2026-10-04) | No MFA prompt. The two mobile login methods returned 429; a later fallback method succeeded. Tokens: `di_token`, `di_refresh_token`, `di_client_id`. |
 | 2. Read strength sets, lb correct | Pass (2026-10-04) | Account had no strength history, so this used a session logged from the check 3 workout. Bench logged at 190 lb came back as 86187 g = 190.0 lb. Fixture in `tests/fixtures/garmin/`. |
 | 3. Push workout, weight shown on watch in lb | Pass (2026-10-04), after a fix | The helper's gram encoding did not display on the watch. Kg with 2 decimals displays 190 / 225 / 205 lb correctly. See "Workout step weights" below. |
-| 4. FastMCP + GitHub auth on Vercel, used from phone | Pass (2026-10-04), cold start pending | Connector added on claude.ai web; `whoami` returned login and id from the phone. A wrong `ALLOWED_GITHUB_LOGIN` was denied. Connection survived a redeploy without reconnecting. 15+ min idle test not yet run. |
+| 4. FastMCP + GitHub auth on Vercel, used from phone | Pass (2026-10-04) | Connector added on claude.ai web; `whoami` returned login and id from the phone. A wrong `ALLOWED_GITHUB_LOGIN` was denied. Connection survived a redeploy without reconnecting. After 15+ min idle, a new instance (new `instance_id`) served `whoami` with no reconnect. |
 | 5. Garmin call from Vercel IPs | Pass (2026-10-04) | `garmin_recent_activities` returned the athlete's run from the phone. No 403 or 429 (garminconnect issue #444 did not reproduce). Tokens loaded from an env var, no credentials. |
+
+Phase 0 exit criteria met on 2026-10-04: all five checks pass. Phase 1 may start.
 
 ## 2026-10-04: fastmcp 4.x, pinned
 
