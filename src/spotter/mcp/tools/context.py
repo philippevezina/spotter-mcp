@@ -482,7 +482,10 @@ def open_flags(conn: Connection, today: date) -> dict[str, Any]:
             }
             for m in missed
         ],
-        "stalls": [],  # Phase 4 (engine.progression)
+        # Null, not []: stall detection arrives in Phase 4 (engine.progression), and an
+        # empty list read as "no stalls" in the Phase 3 exit check.
+        "stalls": None,
+        "stalls_note": "Stall detection is not available yet. Do not report stalls as absent.",
     }
 
 
@@ -724,6 +727,7 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         readiness today plus 7 and 28 day counts, endurance load and flags, the last 3 strength
         sessions, a 28-day per-exercise strength rollup, and open flags (unmapped exercises,
         missed sessions). If sync fails, `sync.error` says why and the rest uses stored data.
+        Endurance here covers 7 days; use get_endurance_load for longer history.
         Loads in lb, distances in km."""
         try:
             sync = garmin_sync(deps, force=force_sync)

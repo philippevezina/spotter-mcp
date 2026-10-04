@@ -8,6 +8,6 @@ from pathlib import Path
 # Fallback in case the runtime does not install the project package from uv.lock.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from spotter.mcp.asgi import app  # noqa: E402
+from spotter.mcp.asgi import app
 
 __all__ = ["app"]
