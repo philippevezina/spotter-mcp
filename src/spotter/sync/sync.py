@@ -1,4 +1,5 @@
-"""Incremental Garmin sync (SPEC section 9): activities of every type, strength sets, stats.
+"""Incremental Garmin sync (SPEC section 9): activities of every type, strength sets, stats,
+then daily metrics (`spotter.sync.metrics`) under the same lock and budget.
 
 - One run at a time: a session advisory lock held on a dedicated connection.
   Pass an unpooled engine as `lock_engine`; Neon's pooler is in transaction mode.
@@ -22,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from spotter.db.schema import activities, athlete, exercises, performed_sets, sync_state
 from spotter.garmin import mappers
+from spotter.sync import metrics
 from spotter.sync.stats import rebuild_activity_stats
 
 SOURCE = "activities"
@@ -39,6 +41,10 @@ class ActivitySource(Protocol):
     def exercise_sets(self, activity_id: int) -> dict[str, Any]: ...
 
 
+class GarminSource(ActivitySource, metrics.MetricsSource, Protocol):
+    """Everything `run_sync` reads. `spotter.garmin.client.GarminClient` satisfies it."""
+
+
 @dataclass
 class SyncResult:
     skipped: str | None = None  # "locked" | "recent"
@@ -47,6 +53,8 @@ class SyncResult:
     activities: int = 0
     strength_sessions: int = 0
     unmapped_sets: int = 0
+    metric_days: int = 0
+    metric_day_fetches: int = 0
     partial: bool = False
 
     def as_dict(self) -> dict[str, Any]:
@@ -111,19 +119,22 @@ def _window_start(cursor: dict[str, Any] | None, since: date | None, today: date
 
 def run_sync(
     engine: Engine,
-    client: ActivitySource,
+    client: GarminSource,
     *,
     since: date | None = None,
     full: bool = False,
     force: bool = False,
     budget_s: float | None = DEFAULT_BUDGET_S,
+    metrics_days: int = metrics.RANGE_DAYS,
     lock_engine: Engine | None = None,
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = _utcnow,
 ) -> SyncResult:
-    """Sync activities into Postgres. `budget_s=None` means no time limit (backfill).
+    """Sync activities, then daily metrics. `budget_s=None` means no time limit (backfill).
 
-    `full` re-reads sets of every strength activity in the window.
+    `full` re-reads sets of every strength activity in the window. Metrics cover
+    the `metrics_days` days ending today, and run only if activities finished
+    within the budget.
     """
     with (lock_engine or engine).connect() as lock_conn:
         got = lock_conn.execute(select(func.pg_try_advisory_lock(LOCK_KEY))).scalar_one()
@@ -131,7 +142,9 @@ def run_sync(
         if not got:
             return SyncResult(skipped="locked")
         try:
-            return _run_locked(engine, client, since, full, force, budget_s, clock, now)
+            return _run_locked(
+                engine, client, since, full, force, budget_s, metrics_days, clock, now
+            )
         finally:
             lock_conn.execute(select(func.pg_advisory_unlock(LOCK_KEY)))
             lock_conn.commit()
@@ -139,11 +152,12 @@ def run_sync(
 
 def _run_locked(
     engine: Engine,
-    client: ActivitySource,
+    client: GarminSource,
     since: date | None,
     full: bool,
     force: bool,
     budget_s: float | None,
+    metrics_days: int,
     clock: Callable[[], float],
     now: Callable[[], datetime],
 ) -> SyncResult:
@@ -216,4 +230,9 @@ def _run_locked(
                     },
                 )
             )
+        m = metrics.sync_metrics(
+            engine, client, today, started, days=metrics_days, deadline=deadline, clock=clock
+        )
+        result.metric_days, result.metric_day_fetches = m.days, m.day_fetches
+        result.partial = m.partial
     return result
