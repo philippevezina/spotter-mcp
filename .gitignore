@@ -9,6 +9,7 @@ __pycache__/
 # Secrets and local state
 .env
 .env.*
+!.env.example
 .vercel/
 
 # Phase 0 spikes: tokens and raw Garmin payloads never get committed

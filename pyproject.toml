@@ -1,0 +1,61 @@
+[project]
+name = "spotter"
+version = "0.1.0"
+description = "Remote MCP server for planning strength training. Works with Garmin Connect."
+readme = "CLAUDE.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.13",
+    "cryptography>=43",
+    "garminconnect[workout]==0.3.17",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0.30",
+]
+
+[project.scripts]
+spotter = "spotter.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spotter"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["spikes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/spotter"]
+exclude = ["^spikes/"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "spotter.engine.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "garminconnect.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
