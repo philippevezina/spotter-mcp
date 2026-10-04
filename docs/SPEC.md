@@ -168,6 +168,16 @@ CREATE TABLE exercises (
 -- Seeded from garminconnect.exercises (1,527 rows). Curated fields are filled
 -- when an exercise is first used in a plan.
 
+CREATE TABLE exercise_aliases (
+  garmin_category text NOT NULL,
+  garmin_name     text NOT NULL DEFAULT '',
+  exercise_id     bigint NOT NULL REFERENCES exercises(id),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (garmin_category, garmin_name)
+);
+-- Written by map_exercise (Phase 3). Sync maps a set by exact catalog match
+-- first, then by alias.
+
 CREATE TABLE goals (
   id                 bigserial PRIMARY KEY,
   kind               text NOT NULL,   -- strength|hypertrophy|hybrid|endurance_support
@@ -402,9 +412,9 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 - Triggered by `get_training_snapshot` and `sync_garmin`.
 - Takes `pg_try_advisory_lock` on a dedicated connection to the unpooled URL (Neon's pooler is in transaction mode). If another sync holds it, skip and use current data.
 - Time budget of 60 s per call. Activities newest first since `sync_state.cursor` minus a 2-day overlap. Stop when the budget is spent and report `partial: true`. The cursor moves only on a complete run. Details in decisions.md ("Sync mechanics").
-- For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)`, recompute `exercise_session_stats`.
+- For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)` (exact match, then `exercise_aliases`), recompute `exercise_session_stats`.
 - Link a strength activity to the `scheduled_session` on the same local date with status `pushed` (Garmin's workout id on the activity, if present, takes priority). Set status `completed`.
-- Daily metrics (Phase 3): last 14 days on each sync (values get revised after sleep), upsert by date.
+- Daily metrics (Phase 3): range calls (HRV, Body Battery, max metrics, body composition) cover the last 14 days on each sync. Per-day calls (sleep, training readiness, resting HR, training status) cover the last 3 days plus any day in that window with no row. Values get revised after sleep. Upsert by date. Same lock and budget as activities, which run first. Own `sync_state` row `daily_metrics`. Backfill covers the last 28 days of metrics by default. Details in decisions.md ("Daily metrics sync window").
 - Backfill: `spotter backfill --since 2026-01-01` runs locally against the production database, with no time limit.
 
 ## 10. Engine (`spotter.engine`)
@@ -467,12 +477,12 @@ General rules:
 | Tool | Purpose |
 |---|---|
 | `sync_garmin` | `full?`, `since?`. Manual sync within the time budget. |
-| `map_exercise` | Map an unmapped Garmin `(category, name)` to an exercise and rebuild affected stats. |
+| `map_exercise` | Map an unmapped Garmin `(category, name)` to an exercise: writes `exercise_aliases`, remaps stored sets, rebuilds affected stats. |
 
 ## 12. Auth
 
 - FastMCP `GitHubProvider` (OAuth proxy) with a GitHub OAuth App whose callback is `https://spotter-mcp.vercel.app/auth/callback`.
-- Restrict access: every request checks that the GitHub `login` claim equals `ALLOWED_GITHUB_LOGIN`. Reject otherwise. Implement as middleware, not per tool.
+- Restrict access: every request checks that the GitHub `sub` claim (numeric user id) equals `ALLOWED_GITHUB_USER_ID`. Reject otherwise. Implement as middleware, not per tool.
 - `client_storage`: py-key-value's `PostgreSQLStore` on the direct (unpooled) Neon URL, wrapped with `FernetEncryptionWrapper`. The store owns its table (see decisions.md).
 - `jwt_signing_key` from env.
 
@@ -484,7 +494,7 @@ General rules:
 | `DATABASE_URL_UNPOOLED` | Neon direct connection string, for migrations and OAuth client storage |
 | `GARMIN_TOKEN_KEY` | Fernet key for `garmin_tokens` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | OAuth App |
-| `ALLOWED_GITHUB_LOGIN` | The only GitHub user allowed |
+| `ALLOWED_GITHUB_USER_ID` | Numeric id of the only GitHub user allowed |
 | `JWT_SIGNING_KEY` | FastMCP token signing |
 | `STORAGE_ENCRYPTION_KEY` | Fernet key for OAuth client storage |
 | `BASE_URL` | `https://spotter-mcp.vercel.app` |
@@ -537,13 +547,15 @@ Exit: production database holds full strength history with correct lb values whe
 
 ### Phase 3: Read-only MCP on Vercel
 
+Two PRs (decisions.md): 3a is metrics sync and engine, 3b is the server, tools and deploy.
+
 - FastMCP server, auth with allowlist, Postgres-backed client storage.
 - Tools: `get_training_snapshot`, `get_exercise_history`, `get_readiness`, `get_endurance_load`, `get_plan`, `search_exercises`, `sync_garmin`, `map_exercise`.
 - Daily metrics sync (SPEC section 9) with recorded fixtures for the section 8.2 metric calls.
 - `spotter.engine.readiness` and `spotter.engine.endurance`.
 - Deploy, add connector, test from phone.
 
-Exit: from the phone, "summarize my last 4 weeks of training" returns a correct summary using only these tools.
+Exit: from the phone, "summarize my last 4 weeks of training" returns a correct summary using only these tools. Checked against seeded test sessions, deleted afterwards (decisions.md).
 
 ### Phase 4: Planning and progression
 
