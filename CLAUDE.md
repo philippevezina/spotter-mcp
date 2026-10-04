@@ -22,9 +22,11 @@ uv sync                                  # install
 docker compose up -d db                  # local Postgres
 uv run alembic upgrade head              # migrate
 uv run pytest                            # tests
+uv run pytest tests/engine --cov=spotter.engine --cov-branch --cov-fail-under=100
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src/spotter/engine
-uv run spotter --help                    # CLI: bootstrap-login, import-tokens, garmin-check, seed-exercises
+uv run spotter --help                    # CLI: bootstrap-login, import-tokens, garmin-check, seed-exercises,
+                                         #      sync, backfill --since, rebuild-stats, strength-log
 uv run --env-file .env.local spotter ... # same, against production (Neon)
 uv run fastmcp dev src/spotter/mcp/server.py   # local MCP inspector
 ```
