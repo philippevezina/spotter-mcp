@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import date, timedelta
+import uuid
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -21,6 +22,10 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import AuthMiddleware
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+# Set once per Python process: a new id means a cold start (spike diagnostics).
+INSTANCE_ID = uuid.uuid4().hex[:8]
+INSTANCE_STARTED_AT = datetime.now(UTC)
 
 CLAUDE_CALLBACKS = [
     "https://claude.ai/api/mcp/auth_callback",
@@ -67,7 +72,13 @@ mcp = FastMCP("Spotter spike", auth=auth, middleware=[AuthMiddleware(auth=allowe
 def whoami() -> dict[str, Any]:
     """Return the GitHub identity of the caller. Phase 0 spike."""
     claims = get_access_token().claims
-    return {"login": claims.get("login"), "sub": claims.get("sub")}
+    return {
+        "login": claims.get("login"),
+        "sub": claims.get("sub"),
+        "instance_id": INSTANCE_ID,
+        "instance_started_at": INSTANCE_STARTED_AT.isoformat(timespec="seconds"),
+        "uptime_s": round((datetime.now(UTC) - INSTANCE_STARTED_AT).total_seconds()),
+    }
 
 
 @mcp.tool
