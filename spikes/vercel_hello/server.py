@@ -50,6 +50,7 @@ auth = GitHubProvider(
     jwt_signing_key=os.environ["JWT_SIGNING_KEY"],
     client_storage=storage,
     allowed_client_redirect_uris=CLAUDE_CALLBACKS,
+    required_scopes=["read:user"],  # identity only; the default "user" can write the profile
 )
 
 ALLOWED_LOGIN = os.environ["ALLOWED_GITHUB_LOGIN"]
