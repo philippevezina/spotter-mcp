@@ -63,7 +63,7 @@ Neon Postgres (free tier)       Garmin Connect (unofficial API)
 ## 4. Tech stack
 
 - Python 3.12, managed with `uv`.
-- `fastmcp` (2.x) for the MCP server, `stateless_http=True`.
+- `fastmcp==4.0.10` (pinned) for the MCP server, `http_app(stateless_http=True)`.
 - `garminconnect==0.3.17` (pinned) with the `workout` extra (pydantic).
 - Postgres via SQLAlchemy 2.0 Core and `psycopg` 3. Migrations with Alembic.
 - `cryptography` (Fernet) for encrypting Garmin tokens at rest.
@@ -119,10 +119,10 @@ spotter-mcp/
 ## 6. Units
 
 - The user thinks in **pounds**. Every value shown to Claude or the user is in lb.
-- **Storage is kilograms** (`NUMERIC(7,3)`), because Garmin stores weight in metric (grams with a kg unit tag for workout steps).
+- **Storage is kilograms** (`NUMERIC(7,3)`), because Garmin stores weight in metric. Workout steps: `weightValue` in kg rounded to 0.01 under the `kilogram` unit tag (grams do not display on the watch). Performed sets: `weight` in grams. See decisions.md.
 - `spotter.units` owns all conversion. Rule: round to the achievable lb increment first, then convert to kg for storage and for Garmin. Convert back and round to 0.5 lb for display.
 - Each exercise has `increment_lb` (smallest real jump): barbell 5 lb, dumbbell 5 lb per hand, machine stack configurable.
-- Phase 0 must confirm the round trip: a 185 lb target pushed to Garmin shows as 185 lb on the watch, and a set logged as 185 lb on the watch syncs back as 185 lb after rounding.
+- Round trip confirmed in Phase 0: targets pushed as 2-decimal kg show as the right lb on the watch, and a set logged at 190 lb syncs back as 190.0 lb after rounding.
 
 ## 7. Database schema (Postgres)
 
@@ -368,7 +368,7 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 - The server loads tokens from `garmin_tokens`, decrypts with `GARMIN_TOKEN_KEY`, and passes the inline JSON as `tokenstore`.
 - After each Garmin session, if the token store changed (refresh), re-encrypt and save it.
 - The server never calls login with credentials. If tokens are invalid, tools return a clear error: "Garmin session expired. Run `spotter bootstrap-login` locally."
-- Confirm the exact dump/load method names for the token store in v0.3.17 before coding.
+- Token store API (v0.3.17): `garmin.client.dumps()` to save; `Garmin().login(tokenstore=<inline JSON>)` to load. Inline JSON is never auto-saved, so compare `dumps()` before and after to detect a refresh.
 
 ### 8.2 Read calls used
 
@@ -564,7 +564,5 @@ Exit: two weeks of real use without manual database fixes.
 
 ## 16. Open items
 
-- Garmin MFA status on the account (bootstrap handles both cases).
-- Whether `upload_strength_workout` accepts a description field.
-- Whether Garmin's activity JSON links back to the workout id it was started from.
+- Resolved in Phase 0 (see decisions.md): MFA is off on the account; the workout `description` is accepted; activities link back via `workoutId` / `metadataDTO.associatedWorkoutId`.
 - Vercel function region: default `iad1` is fine; revisit only if latency is noticeable.
