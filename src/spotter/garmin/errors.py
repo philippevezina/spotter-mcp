@@ -19,6 +19,10 @@ class GarminRateLimited(GarminError):
     """Garmin returned 429. Stop; do not retry in a loop."""
 
 
+class GarminUnavailable(GarminError):
+    """Garmin could not be reached or returned a server error. Safe to retry later."""
+
+
 class GarminTokensMissing(GarminError):
     def __init__(self) -> None:
         super().__init__(f"No Garmin tokens stored. {RELOGIN_HINT}")

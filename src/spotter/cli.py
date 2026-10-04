@@ -15,7 +15,8 @@ from spotter.db.seed import seed_exercises
 from spotter.db.session import get_engine
 from spotter.garmin import client as garmin_client
 from spotter.garmin import tokens
-from spotter.garmin.errors import GarminError, GarminTokensMissing
+from spotter.garmin.errors import GarminError
+from spotter.garmin.session import garmin_session
 
 
 def _bootstrap_login(_: argparse.Namespace) -> None:
@@ -38,17 +39,10 @@ def _import_tokens(args: argparse.Namespace) -> None:
 
 
 def _garmin_check(_: argparse.Namespace) -> None:
-    engine = get_engine()
-    with engine.connect() as conn:
-        before = tokens.load_tokens(conn)
-    if before is None:
-        raise GarminTokensMissing()
-    session = garmin_client.GarminClient.from_tokens(before)
-    session.check()
-    with engine.begin() as conn:
-        refreshed = tokens.save_if_changed(conn, before, session.dumps())
+    with garmin_session(get_engine()) as session:
+        session.client.check()
     print("ok")
-    print(f"refreshed: {str(refreshed).lower()}")
+    print(f"refreshed: {str(session.refreshed).lower()}")
 
 
 def _seed_exercises(_: argparse.Namespace) -> None:
