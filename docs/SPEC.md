@@ -87,9 +87,11 @@ spotter-mcp/
     db/
       schema.py           # SQLAlchemy Core tables
       session.py
+      seed.py             # exercise catalog seed
     migrations/           # Alembic
     garmin/
       client.py           # only module that imports garminconnect
+      errors.py           # domain errors (auth expired, 429, bad token key)
       tokens.py           # load/save encrypted tokens in Postgres
       mappers.py          # Garmin JSON -> domain rows
       workouts.py         # domain prescription -> Garmin StrengthWorkout
@@ -107,10 +109,11 @@ spotter-mcp/
       auth.py             # GitHub provider + login allowlist
       instructions.md     # shipped server instructions (from coaching-rules.md Part B)
       tools/              # one module per tool group
-    cli.py                # bootstrap-login, backfill, seed-exercises, sync
+    cli.py                # bootstrap-login, import-tokens, garmin-check, seed-exercises, backfill, sync
   tests/
     fixtures/garmin/      # recorded, anonymized Garmin responses
   spikes/                 # Phase 0 throwaway scripts
+  alembic.ini
   docker-compose.yml
   vercel.json
   pyproject.toml
@@ -346,15 +349,9 @@ CREATE TABLE garmin_tokens (
   ciphertext bytea NOT NULL,         -- Fernet-encrypted token store JSON
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-
-CREATE TABLE kv_store (              -- backing store for FastMCP OAuth client storage
-  collection text NOT NULL,
-  key        text NOT NULL,
-  value      bytea NOT NULL,         -- already encrypted by FernetEncryptionWrapper
-  expires_at timestamptz,
-  PRIMARY KEY (collection, key)
-);
 ```
+
+OAuth client storage is not in this schema. py-key-value's `PostgreSQLStore` creates and owns its own table (see decisions.md).
 
 Note: `scheduled_sessions.activity_id` references `activities`, so create `activities` before `scheduled_sessions` in the migration.
 
@@ -364,7 +361,10 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 
 ### 8.1 Authentication
 
-- `spotter bootstrap-login` (CLI, run on the Mac): prompts for email, password and MFA code if asked (`prompt_mfa` callback), then encrypts the token store and writes it to `garmin_tokens`.
+- `spotter bootstrap-login` (CLI, run on the Mac): prompts for email, password and MFA code if asked (`prompt_mfa` callback), then encrypts the token store and writes it to `garmin_tokens`. Use only when no valid token exists: each login risks a 429.
+- `spotter import-tokens <path>` stores an existing token store JSON file, encrypted, without logging in.
+- `spotter garmin-check` loads the stored tokens, makes one read call, and saves the token store if it was refreshed.
+- Keep one live copy of the token, in `garmin_tokens`. A second copy breaks if Garmin rotates refresh tokens.
 - The server loads tokens from `garmin_tokens`, decrypts with `GARMIN_TOKEN_KEY`, and passes the inline JSON as `tokenstore`.
 - After each Garmin session, if the token store changed (refresh), re-encrypt and save it.
 - The server never calls login with credentials. If tokens are invalid, tools return a clear error: "Garmin session expired. Run `spotter bootstrap-login` locally."
@@ -468,7 +468,7 @@ General rules:
 
 - FastMCP `GitHubProvider` (OAuth proxy) with a GitHub OAuth App whose callback is `https://spotter-mcp.vercel.app/auth/callback`.
 - Restrict access: every request checks that the GitHub `login` claim equals `ALLOWED_GITHUB_LOGIN`. Reject otherwise. Implement as middleware, not per tool.
-- `client_storage`: FastMCP's key-value interface wrapped with `FernetEncryptionWrapper`, backed by the `kv_store` Postgres table (write a small adapter). If writing the adapter turns out to be heavy, use Upstash Redis free tier instead and record that in `docs/decisions.md`.
+- `client_storage`: py-key-value's `PostgreSQLStore` on the direct (unpooled) Neon URL, wrapped with `FernetEncryptionWrapper`. The store owns its table (see decisions.md).
 - `jwt_signing_key` from env.
 
 ## 13. Configuration (env vars)
@@ -476,6 +476,7 @@ General rules:
 | Var | Purpose |
 |---|---|
 | `DATABASE_URL` | Neon pooled connection string |
+| `DATABASE_URL_UNPOOLED` | Neon direct connection string, for migrations and OAuth client storage |
 | `GARMIN_TOKEN_KEY` | Fernet key for `garmin_tokens` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | OAuth App |
 | `ALLOWED_GITHUB_LOGIN` | The only GitHub user allowed |
@@ -514,10 +515,10 @@ Exit: all five pass, or a documented fallback decision (e.g. move to Oracle) is 
 - Alembic migration for the full schema.
 - `spotter seed-exercises` from `garminconnect.exercises`.
 - `spotter.units` with tests.
-- `spotter.garmin.tokens` and `spotter bootstrap-login` writing encrypted tokens to Postgres.
+- `spotter.garmin.tokens`, `spotter bootstrap-login` and `spotter import-tokens` writing encrypted tokens to Postgres; `spotter garmin-check` to verify them.
 - Neon project created, migration applied to production.
 
-Exit: `uv run pytest` green; `spotter bootstrap-login` stores tokens in Neon; `exercises` has 1,527 rows.
+Exit: `uv run pytest` green; tokens stored in Neon (imported from the Phase 0 token) and `spotter garmin-check` passes against them; `exercises` has 1,527 rows.
 
 ### Phase 2: Sync and stats
 

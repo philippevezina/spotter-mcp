@@ -108,9 +108,30 @@ Status: decided.
 Why: `login` changes if the GitHub account is renamed, which would lock the athlete out. The numeric `sub` claim is permanent. `whoami` returns both.
 Status: proposed for Phase 3. Spike keeps `ALLOWED_GITHUB_LOGIN`.
 
-## 2026-10-04: One Garmin token copy; import the spike token in Phase 1 (proposed)
+## 2026-10-04: One Garmin token copy; import the spike token in Phase 1
 
 Why: an env var is read-only at runtime, so a server copy of the token can never save a refresh. If Garmin rotates refresh tokens, two copies (Mac and Vercel) break each other, and recovery needs a new login with 429 risk.
 Done: `GARMIN_TOKENS_JSON` removed from Vercel after Phase 0. The only live copy is `spikes/.tokens/garmin_tokens.json` on the Mac.
-Proposed for Phase 1: add `spotter import-tokens <path>` to load that file into `garmin_tokens` (encrypted), and use it instead of a fresh `bootstrap-login`. Keep `bootstrap-login` for when the token dies.
-Status: proposed.
+Phase 1: `spotter import-tokens <path>` loads that file into `garmin_tokens` (encrypted) instead of a fresh `bootstrap-login`. `spotter garmin-check` then proves the Neon copy works. After that passes, the Mac file is deleted. `bootstrap-login` stays for when the token dies, and is tested with a fake client only.
+Status: decided (Phase 1). SPEC Phase 1 exit criterion reworded to match.
+
+## 2026-10-04: Local Postgres via OrbStack
+
+Why: SPEC and CLAUDE.md use `docker compose up -d db`, and Docker was not installed. OrbStack provides the Docker CLI and keeps the Docker fallback path (Oracle VM) tested.
+Tests create a fresh `spotter_test` database on that server each run (`TEST_DATABASE_URL` overrides). They fail, not skip, when it is down.
+Status: decided.
+
+## 2026-10-04: No kv_store table
+
+Why: py-key-value's `PostgreSQLStore` owns its OAuth client table (see "OAuth client storage" above). The Phase 1 migration leaves `kv_store` out, and SPEC sections 7 and 12 are updated.
+Status: decided.
+
+## 2026-10-04: `.env` is local, `.env.local` is production
+
+`spotter.config` reads `.env` only, which points at the compose Postgres. Commands against Neon pass the file explicitly: `uv run --env-file .env.local spotter <command>` (and the same for `alembic`). A bare command only reaches Neon if `DATABASE_URL` is exported in the shell, so do not export it.
+Migrations use `DATABASE_URL_UNPOOLED` when set, since Neon's pooler does not suit DDL sessions.
+Status: decided.
+
+## Phase 1 results
+
+Exit criteria met on 2026-10-04: `uv run pytest` green on the compose Postgres; migration applied to Neon; `exercises` has 1,527 rows; the Phase 0 token was imported into `garmin_tokens` and `spotter garmin-check` passed. The Mac copy (`spikes/.tokens/garmin_tokens.json`) is deleted, so Neon holds the only live token. The Phase 0 spike scripts no longer have a token to read. Phase 2 may start.
