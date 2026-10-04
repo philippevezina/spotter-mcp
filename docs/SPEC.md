@@ -387,7 +387,9 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 
 ### 8.2 Read calls used
 
-`get_activities_by_date`, `get_activity_exercise_sets`, `get_hrv_data_range`, `get_training_readiness`, `get_morning_training_readiness`, `get_sleep_data`, `get_body_battery`, `get_rhr_day`, `get_training_status`, `get_max_metrics_range`, `get_body_composition`.
+`get_activities_by_date`, `get_activity_exercise_sets`, `get_hrv_data_range`, `get_max_metrics_range`, `get_body_composition`, `get_training_readiness`, `get_sleep_data`, `get_user_summary`.
+
+The daily summary (`get_user_summary`) carries resting HR, Body Battery high and low, and average stress, so `get_rhr_day` and `get_body_battery` are not used. Morning readiness is picked from the `get_training_readiness` list, with no extra call. `get_training_status` (load balance) waits until a recording shows its populated shape; `load_balance` stays null until then (decisions.md).
 
 ### 8.3 Write calls used
 
@@ -414,7 +416,7 @@ Only `spotter.garmin.client` imports `garminconnect`. Everything else uses domai
 - Time budget of 60 s per call. Activities newest first since `sync_state.cursor` minus a 2-day overlap. Stop when the budget is spent and report `partial: true`. The cursor moves only on a complete run. Details in decisions.md ("Sync mechanics").
 - For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)` (exact match, then `exercise_aliases`), recompute `exercise_session_stats`.
 - Link a strength activity to the `scheduled_session` on the same local date with status `pushed` (Garmin's workout id on the activity, if present, takes priority). Set status `completed`.
-- Daily metrics (Phase 3): range calls (HRV, Body Battery, max metrics, body composition) cover the last 14 days on each sync. Per-day calls (sleep, training readiness, resting HR, training status) cover the last 3 days plus any day in that window with no row. Values get revised after sleep. Upsert by date. Same lock and budget as activities, which run first. Own `sync_state` row `daily_metrics`. Backfill covers the last 28 days of metrics by default. Details in decisions.md ("Daily metrics sync window").
+- Daily metrics (Phase 3): range calls (HRV, max metrics, body composition) cover the last 14 days on each sync. Per-day calls (sleep, training readiness, daily summary) cover the last 3 days plus any day in that window never fetched per-day. Values get revised after sleep. Upsert by date. Same lock and budget as activities, which run first. Own `sync_state` row `daily_metrics`. Backfill covers the last 28 days of metrics by default. Details in decisions.md ("Daily metrics sync window").
 - Backfill: `spotter backfill --since 2026-01-01` runs locally against the production database, with no time limit.
 
 ## 10. Engine (`spotter.engine`)

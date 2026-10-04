@@ -27,6 +27,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy src/spotter/engine
 uv run spotter --help                    # CLI: bootstrap-login, import-tokens, garmin-check, seed-exercises,
                                          #      sync, backfill --since, rebuild-stats, strength-log
+                                         #      (sync and backfill take --metrics-days)
 uv run --env-file .env.local spotter ... # same, against production (Neon)
 uv run fastmcp dev src/spotter/mcp/server.py   # local MCP inspector
 ```
