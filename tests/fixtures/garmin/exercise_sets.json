@@ -1,0 +1,100 @@
+{
+  "activityId": 900000001,
+  "exerciseSets": [
+    {
+      "avgConcentricDuration": null,
+      "avgConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "avgConcentricRom": null,
+      "avgEccentricDuration": null,
+      "duration": 49.846,
+      "exercises": [
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        },
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        },
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        }
+      ],
+      "maxConcentricDuration": null,
+      "maxConcentricMeanPower": null,
+      "maxConcentricPeakPower": null,
+      "maxConcentricRom": null,
+      "maxEccentricDuration": null,
+      "messageIndex": 0,
+      "minimalViableThreshold": null,
+      "repetitionCount": 5,
+      "setType": "ACTIVE",
+      "startTime": "2025-10-05T18:32:25.0",
+      "weight": 86187.0,
+      "wktStepIndex": 0
+    },
+    {
+      "avgConcentricDuration": null,
+      "avgConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "avgConcentricRom": null,
+      "avgEccentricDuration": null,
+      "duration": 120.0,
+      "exercises": [],
+      "maxConcentricDuration": null,
+      "maxConcentricMeanPower": null,
+      "maxConcentricPeakPower": null,
+      "maxConcentricRom": null,
+      "maxEccentricDuration": null,
+      "messageIndex": 1,
+      "minimalViableThreshold": null,
+      "repetitionCount": null,
+      "setType": "REST",
+      "startTime": "2025-10-05T18:33:14.0",
+      "weight": null,
+      "wktStepIndex": 1
+    },
+    {
+      "avgConcentricDuration": null,
+      "avgConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "avgConcentricRom": null,
+      "avgEccentricDuration": null,
+      "duration": 37.05,
+      "exercises": [
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        },
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        },
+        {
+          "category": "BENCH_PRESS",
+          "name": "BARBELL_BENCH_PRESS",
+          "probability": 99.609375
+        }
+      ],
+      "maxConcentricDuration": null,
+      "maxConcentricMeanPower": null,
+      "maxConcentricPeakPower": null,
+      "maxConcentricRom": null,
+      "maxEccentricDuration": null,
+      "messageIndex": 2,
+      "minimalViableThreshold": null,
+      "repetitionCount": 0,
+      "setType": "ACTIVE",
+      "startTime": "2025-10-05T18:35:14.0",
+      "weight": 86187.0,
+      "wktStepIndex": 0
+    }
+  ]
+}

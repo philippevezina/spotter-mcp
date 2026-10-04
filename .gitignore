@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local state
+.env
+.env.*
+.vercel/
+
+# Phase 0 spikes: tokens and raw Garmin payloads never get committed
+spikes/.tokens/
+spikes/out/
+
+.DS_Store
+.neon
+node_modules/

@@ -1,0 +1,11 @@
+[project]
+name = "spotter-spike-hello"
+version = "0.0.0"
+description = "Phase 0 spike: stateless MCP server on Vercel, works with Garmin Connect"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp==4.0.10",
+    "py-key-value-aio[postgresql]==0.4.6",
+    "cryptography",
+    "garminconnect==0.3.17",
+]
