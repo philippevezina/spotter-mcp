@@ -94,3 +94,38 @@ class GarminClient:
         """Sets of one strength activity. Weights in grams."""
         result: dict[str, Any] = self._call(self._api.get_activity_exercise_sets, activity_id)
         return result or {}
+
+    # Daily metrics (SPEC 8.2). Raw payloads; spotter.garmin.mappers turns them into rows.
+    # Range calls take [start, end]; the others take one date. The daily summary
+    # covers resting HR, Body Battery and stress, so their own endpoints are not used.
+
+    def hrv_range(self, start: date, end: date) -> dict[str, Any]:
+        result: dict[str, Any] | None = self._call(
+            self._api.get_hrv_data_range, start.isoformat(), end.isoformat()
+        )
+        return result or {}
+
+    def max_metrics_range(self, start: date, end: date) -> Any:
+        return self._call(self._api.get_max_metrics_range, start.isoformat(), end.isoformat())
+
+    def body_composition_range(self, start: date, end: date) -> dict[str, Any]:
+        result: dict[str, Any] | None = self._call(
+            self._api.get_body_composition, start.isoformat(), end.isoformat()
+        )
+        return result or {}
+
+    def training_readiness(self, day: date) -> list[dict[str, Any]]:
+        """Every readiness snapshot of the day. The mapper picks the morning one."""
+        result: list[dict[str, Any]] | None = self._call(
+            self._api.get_training_readiness, day.isoformat()
+        )
+        return result or []
+
+    def sleep(self, day: date) -> dict[str, Any]:
+        result: dict[str, Any] | None = self._call(self._api.get_sleep_data, day.isoformat())
+        return result or {}
+
+    def daily_summary(self, day: date) -> dict[str, Any]:
+        """Daily totals: resting HR, Body Battery high and low, average stress."""
+        result: dict[str, Any] | None = self._call(self._api.get_user_summary, day.isoformat())
+        return result or {}
