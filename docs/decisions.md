@@ -333,5 +333,20 @@ Expected `strength_28d` (check run 2026-10-03 to 2026-10-06): 8 sessions.
 | Dumbbell Row | 4 | 12 | 8130.0 | top set 55 → 65 lb, up |
 | Pull-up | 4 | 12 | 0.0 | top-set reps 8 → 9, up |
 
-Cleanup: `--delete` after the athlete confirms the check.
-Status: ready to seed.
+Cleanup: `--delete` removed the 8 activities from Garmin and their rows from Neon on 2026-10-04, after the athlete confirmed the check.
+Status: done. Neon again holds 1 activity (the run) and no strength history.
+
+## Phase 3b results
+
+Checked on 2026-10-04:
+- `uv run pytest` green (222 tests). The engine has 100 % branch coverage. ruff and mypy are clean on `src/spotter`.
+- Migration `0002` (`exercise_aliases`) applied to Neon.
+- A preview deploy installed from `uv.lock` and imported the app, then stopped at `ServerConfigError`, as expected: previews do not get the Production-only env vars.
+- Production serves the new server: OAuth metadata lists only `read:user`, and `POST /mcp` without a token returns 401. The connector was reconnected once; `oauth_store` holds the new registration and `spike_kv_store` is dropped.
+- Seeded 8 sessions, then `spotter backfill --since 2026-09-01`: 9 activities, 0 unmapped sets, `partial: false`. All 20 stats rows match the "Phase 3 test sessions" table.
+
+Exit check: from the phone, "summarize my last 4 weeks of training" returned 8 sessions from Sep 7 to Oct 4, every lift with the right start and end top set, the Oct 3 run (10.2 km, 64 min, aerobic training effect 5.0, load about 417), and readiness data on 3 of 28 days, all green. Every number matched Neon. Phase 3 exit criteria met. Phase 4 may start.
+
+Two gaps found in Claude's answer, both fixed in the snapshot after the check:
+- It said "no stalls" because `flags.stalls` was `[]`, but stall detection only arrives in Phase 4. `stalls` is now `null`, with a note telling Claude not to report stalls as absent.
+- It said it could not see earlier running without calling `get_endurance_load`. The snapshot description now points to that tool for history beyond 7 days.
