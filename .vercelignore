@@ -1,0 +1,7 @@
+# Keep CLI uploads to what the function needs.
+.venv/
+spikes/
+tests/
+docs/
+.env
+.env.*
