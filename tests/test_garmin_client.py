@@ -11,7 +11,12 @@ import garminconnect
 import pytest
 
 from spotter.garmin import client
-from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited, GarminUnavailable
+from spotter.garmin.errors import (
+    GarminAuthExpired,
+    GarminNotFound,
+    GarminRateLimited,
+    GarminUnavailable,
+)
 
 TOKEN = json.dumps({"di_token": "t1", "di_refresh_token": "r1", "di_client_id": "c"})
 REFRESHED = TOKEN.replace("t1", "t2")
@@ -91,6 +96,30 @@ class FakeGarmin:
 
     def get_user_summary(self, cdate: str) -> object:
         return self._metric("get_user_summary", cdate)
+
+    # Workout writes: record (method, args); `write_error` raises instead.
+    write_error: Exception | None = None
+
+    def _write(self, name: str, *args: object) -> object:
+        self.metric_calls.append((name, tuple(str(a) for a in args)))
+        if self.write_error:
+            raise self.write_error
+        return {"workoutId": 77, "workoutScheduleId": 88}
+
+    def upload_workout(self, payload: dict[str, object]) -> object:
+        return self._write("upload_workout", payload["workoutName"])
+
+    def update_workout(self, workout_id: int, payload: dict[str, object]) -> object:
+        return self._write("update_workout", workout_id, payload["workoutName"])
+
+    def schedule_workout(self, workout_id: int, date_str: str) -> object:
+        return self._write("schedule_workout", workout_id, date_str)
+
+    def unschedule_workout(self, schedule_id: int) -> object:
+        return self._write("unschedule_workout", schedule_id)
+
+    def delete_workout(self, workout_id: int) -> object:
+        return self._write("delete_workout", workout_id)
 
 
 @pytest.fixture
@@ -210,3 +239,35 @@ def test_metric_read_maps_errors(fake: type[FakeGarmin]) -> None:
     fake.get_sleep_data = boom  # type: ignore[method-assign,assignment]
     with pytest.raises(GarminRateLimited):
         session.sleep(DAY)
+
+
+def test_workout_writes_return_ids(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    assert session.upload_workout({"workoutName": "Upper W1 2026-10-06"}) == 77
+    session.update_workout(77, {"workoutName": "Upper W1 2026-10-06"})
+    assert session.schedule_workout(77, date(2026, 10, 6)) == 88
+    assert session.unschedule_workout(88) is True
+    assert session.delete_workout(77) is True
+    assert fake.instances[0].metric_calls == [
+        ("upload_workout", ("Upper W1 2026-10-06",)),
+        ("update_workout", ("77", "Upper W1 2026-10-06")),
+        ("schedule_workout", ("77", "2026-10-06")),
+        ("unschedule_workout", ("88",)),
+        ("delete_workout", ("77",)),
+    ]
+
+
+def test_removing_a_missing_workout_is_not_an_error(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    fake.write_error = garminconnect.GarminConnectNotFoundError("API Error 404")
+    assert session.unschedule_workout(88) is False
+    assert session.delete_workout(77) is False
+    with pytest.raises(GarminNotFound):
+        session.update_workout(77, {"workoutName": "x"})
+
+
+def test_workout_write_errors_map_to_domain_errors(fake: type[FakeGarmin]) -> None:
+    session = client.GarminClient.from_tokens(TOKEN)
+    fake.write_error = garminconnect.GarminConnectConnectionError("API Error 500")
+    with pytest.raises(GarminUnavailable):
+        session.delete_workout(77)

@@ -13,7 +13,12 @@ from typing import Any
 import garminconnect
 from garminconnect import exercises as garmin_exercises
 
-from spotter.garmin.errors import GarminAuthExpired, GarminRateLimited, GarminUnavailable
+from spotter.garmin.errors import (
+    GarminAuthExpired,
+    GarminNotFound,
+    GarminRateLimited,
+    GarminUnavailable,
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,8 @@ class GarminClient:
             raise GarminRateLimited("Garmin returned 429. Try again later.") from exc
         except garminconnect.GarminConnectAuthenticationError as exc:
             raise GarminAuthExpired() from exc
+        except garminconnect.GarminConnectNotFoundError as exc:
+            raise GarminNotFound("Garmin has no such item.") from exc
         except garminconnect.GarminConnectConnectionError as exc:
             raise GarminUnavailable("Garmin could not be reached. Try again later.") from exc
 
@@ -129,3 +136,35 @@ class GarminClient:
         """Daily totals: resting HR, Body Battery high and low, average stress."""
         result: dict[str, Any] | None = self._call(self._api.get_user_summary, day.isoformat())
         return result or {}
+
+    # Workout writes (SPEC 8.3). The payload comes from spotter.garmin.workouts.
+
+    def upload_workout(self, payload: dict[str, Any]) -> int:
+        """Create a workout in the Garmin library. Returns its workout id."""
+        result: dict[str, Any] = self._call(self._api.upload_workout, payload)
+        return int(result["workoutId"])
+
+    def update_workout(self, workout_id: int, payload: dict[str, Any]) -> None:
+        """Replace every step of a workout. Its id and calendar entries stay."""
+        self._call(self._api.update_workout, workout_id, payload)
+
+    def schedule_workout(self, workout_id: int, day: date) -> int:
+        """Put a workout on the Garmin calendar. Returns the schedule id."""
+        result: dict[str, Any] = self._call(self._api.schedule_workout, workout_id, day.isoformat())
+        return int(result["workoutScheduleId"])
+
+    def unschedule_workout(self, schedule_id: int) -> bool:
+        """Remove a calendar entry. False when it was already gone."""
+        try:
+            self._call(self._api.unschedule_workout, schedule_id)
+        except GarminNotFound:
+            return False
+        return True
+
+    def delete_workout(self, workout_id: int) -> bool:
+        """Delete a workout from the library. False when it was already gone."""
+        try:
+            self._call(self._api.delete_workout, workout_id)
+        except GarminNotFound:
+            return False
+        return True

@@ -279,9 +279,11 @@ CREATE TABLE activities (
   perceived_effort   int,
   feel               int,
   raw_json           jsonb NOT NULL,
-  synced_at          timestamptz NOT NULL DEFAULT now()
+  synced_at          timestamptz NOT NULL DEFAULT now(),
+  garmin_workout_id  bigint            -- pushed workout it was started from (Phase 5)
 );
 CREATE INDEX activities_date ON activities (local_date);
+CREATE INDEX activities_workout ON activities (garmin_workout_id);
 
 CREATE TABLE performed_sets (
   id              bigserial PRIMARY KEY,
@@ -395,7 +397,7 @@ The daily summary (`get_user_summary`) carries resting HR, Body Battery high and
 
 ### 8.3 Write calls used
 
-`upload_strength_workout` (typed `StrengthWorkout`), `update_workout`, `delete_workout`, `schedule_workout`, `unschedule_workout`.
+`upload_workout` (with the dict from `spotter.garmin.workouts`), `update_workout`, `delete_workout`, `schedule_workout`, `unschedule_workout`. Not `upload_strength_workout`: its helpers send weights in grams (decisions.md). A 404 on delete or unschedule means already gone.
 
 ### 8.4 Building workouts
 
@@ -417,7 +419,7 @@ The daily summary (`get_user_summary`) carries resting HR, Body Battery high and
 - Takes `pg_try_advisory_lock` on a dedicated connection to the unpooled URL (Neon's pooler is in transaction mode). If another sync holds it, skip and use current data.
 - Time budget of 60 s per call. Activities newest first since `sync_state.cursor` minus a 2-day overlap. Stop when the budget is spent and report `partial: true`. The cursor moves only on a complete run. Details in decisions.md ("Sync mechanics").
 - For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)` (exact match, then `exercise_aliases`), recompute `exercise_session_stats`.
-- Link a strength activity to an open `scheduled_session` (`planned` or `pushed`) on the same local date and set status `completed` (Phase 4). From Phase 5, Garmin's workout id on the activity, if present, takes priority.
+- Link a strength activity to an open `scheduled_session` (`planned` or `pushed`) and set status `completed`. Garmin's workout id on the activity matches first, whatever the date (Phase 5). Otherwise the same local date matches (Phase 4). Linking rebuilds the activity's stats, which records `met_prescription` per prescribed exercise.
 - Daily metrics (Phase 3): range calls (HRV, max metrics, body composition) cover the last 14 days on each sync. Per-day calls (sleep, training readiness, daily summary) cover the last 3 days plus any day in that window never fetched per-day. Values get revised after sleep. Upsert by date. Same lock and budget as activities, which run first. Own `sync_state` row `daily_metrics`. Backfill covers the last 28 days of metrics by default. Details in decisions.md ("Daily metrics sync window").
 - Backfill: `spotter backfill --since 2026-01-01` runs locally against the production database, with no time limit.
 
@@ -572,6 +574,8 @@ Two PRs (decisions.md): 4a is the engine and sync linking, 4b is the tools and d
 Exit: Claude can create and activate a plan from a conversation, and `propose_next_session` returns weights that match hand-calculated expectations for 5 test scenarios.
 
 ### Phase 5: Push to Garmin
+
+Two PRs (decisions.md): 5a is the builder, Garmin writes and linking, 5b is the tools and deploy.
 
 - `spotter.garmin.workouts` builder with snapshot tests.
 - Tools: `push_session` (with `dry_run`), `unschedule_session`.

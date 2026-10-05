@@ -20,6 +20,7 @@ from spotter.db.schema import (
     performed_sets,
     plan_days,
     plan_exercises,
+    prescribed_sets,
     scheduled_sessions,
     session_notes,
 )
@@ -132,6 +133,40 @@ def rir_by_date(conn: Connection, exercise_id: int) -> dict[date, int]:
     return out
 
 
+def stored_targets(
+    conn: Connection, exercise_id: int, activity_ids: list[int]
+) -> dict[int, tuple[int, ...]]:
+    """Activity id -> target reps of the sets prescribed at the top weight, in set order,
+    for activities linked to a pushed session that prescribed this exercise. Progression
+    judges sets at the working weight, so back-off targets are left out."""
+    rows = conn.execute(
+        select(
+            scheduled_sessions.c.activity_id,
+            prescribed_sets.c.target_weight_kg,
+            prescribed_sets.c.target_reps,
+        )
+        .join(
+            prescribed_sets,
+            prescribed_sets.c.scheduled_session_id == scheduled_sessions.c.id,
+        )
+        .where(
+            scheduled_sessions.c.activity_id.in_(activity_ids),
+            prescribed_sets.c.exercise_id == exercise_id,
+        )
+        .order_by(scheduled_sessions.c.activity_id, prescribed_sets.c.set_no)
+    )
+    by_activity: dict[int, list[tuple[Decimal, int]]] = {}
+    for r in rows:
+        by_activity.setdefault(r.activity_id, []).append(
+            (r.target_weight_kg or Decimal(0), r.target_reps)
+        )
+    out: dict[int, tuple[int, ...]] = {}
+    for activity_id, sets in by_activity.items():
+        top = max(w for w, _ in sets)
+        out[activity_id] = tuple(reps for w, reps in sets if w == top)
+    return out
+
+
 def exposures(
     conn: Connection,
     exercise_id: int,
@@ -142,6 +177,7 @@ def exposures(
     """Strength sessions of one exercise in the 12 weeks before `before`, oldest first.
 
     Sets in set order, in lb. 0-rep sets are dropped (the watch logs them as ACTIVE).
+    A session linked to a pushed prescription carries its stored targets.
     Exposures in a deload week of `plan` are flagged so progression skips them.
     """
     rows = conn.execute(
@@ -166,13 +202,15 @@ def exposures(
         weight = None if not r.weight_kg else kg_to_lb(r.weight_kg)
         sessions.setdefault(r.activity_id, (r.local_date, []))[1].append(LoadedSet(weight, r.reps))
     rir = rir_by_date(conn, exercise_id) if sessions else {}
+    targets = stored_targets(conn, exercise_id, list(sessions)) if sessions else {}
     weeks = deload or set()
     return [
         Exposure(
             local_date=day,
             sets=tuple(sets),
             rir=rir.get(day),
+            targets=targets.get(activity_id),
             deload=plan is not None and is_deload(plan, weeks, day),
         )
-        for day, sets in sessions.values()
+        for activity_id, (day, sets) in sessions.items()
     ]

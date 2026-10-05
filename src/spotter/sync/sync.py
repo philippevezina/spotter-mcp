@@ -7,8 +7,8 @@ then daily metrics (`spotter.sync.metrics`) under the same lock and budget.
   partial run keeps what it did. An activity row with type strength_training
   therefore always has its sets.
 - The cursor moves only when a run completes.
-- Strength activities link to open scheduled sessions on the same local date
-  (`link_sessions`), so plan adherence works before Phase 5 adds workout ids.
+- Strength activities link to open scheduled sessions (`link_sessions`): by the
+  pushed workout's id first, then by local date.
 """
 
 from __future__ import annotations
@@ -133,14 +133,66 @@ def _store_strength(
     return unmapped
 
 
-def link_sessions(conn: Connection, start: date, end: date) -> int:
-    """Link open sessions dated `start` to `end` to strength activities on the same date.
+def _link(conn: Connection, session_id: int, activity_id: int) -> None:
+    conn.execute(
+        update(scheduled_sessions)
+        .where(scheduled_sessions.c.id == session_id)
+        .values(activity_id=activity_id, status="completed")
+    )
+    rebuild_activity_stats(conn, activity_id)  # writes met_prescription from the link
 
-    Each session takes the earliest strength activity of its date not yet linked to any
-    session; sessions of one date go in plan day order. Linked sessions become
-    `completed`. Idempotent. Callers own the transaction. Returns the number linked.
+
+def link_sessions(conn: Connection, start: date, end: date) -> int:
+    """Link open sessions to the strength activities of `start` to `end`.
+
+    First by workout id: an activity started from a pushed workout links to that
+    session, whatever its date. Then by date: each open session dated in the window
+    takes the earliest strength activity of its date not yet linked to any session;
+    sessions of one date go in plan day order. Linked sessions become `completed`
+    and their activities' stats are rebuilt against the prescription. Idempotent.
+    Callers own the transaction. Returns the number linked.
     """
-    sessions = conn.execute(
+    taken = select(scheduled_sessions.c.activity_id).where(
+        scheduled_sessions.c.activity_id.is_not(None)
+    )
+    free = conn.execute(
+        select(
+            activities.c.garmin_activity_id,
+            activities.c.local_date,
+            activities.c.garmin_workout_id,
+        )
+        .where(
+            activities.c.type == mappers.STRENGTH_TYPE,
+            activities.c.local_date.between(start, end),
+            activities.c.garmin_activity_id.not_in(taken),
+        )
+        .order_by(activities.c.start_time)
+    ).all()
+    if not free:
+        return 0
+    linked = 0
+    by_workout = {
+        a.garmin_workout_id: a.garmin_activity_id for a in reversed(free) if a.garmin_workout_id
+    }
+    used: set[int] = set()
+    if by_workout:
+        for s in conn.execute(
+            select(scheduled_sessions.c.id, scheduled_sessions.c.garmin_workout_id).where(
+                scheduled_sessions.c.status.in_(OPEN_SESSIONS),
+                scheduled_sessions.c.activity_id.is_(None),
+                scheduled_sessions.c.garmin_workout_id.in_(by_workout),
+            )
+        ):
+            activity_id = by_workout[s.garmin_workout_id]
+            _link(conn, s.id, activity_id)
+            used.add(activity_id)
+            linked += 1
+
+    by_date: dict[date, list[int]] = defaultdict(list)
+    for a in free:
+        if a.garmin_activity_id not in used:
+            by_date[a.local_date].append(a.garmin_activity_id)
+    for s in conn.execute(
         select(scheduled_sessions.c.id, scheduled_sessions.c.scheduled_date)
         .join(plan_days, plan_days.c.id == scheduled_sessions.c.plan_day_id)
         .where(
@@ -149,31 +201,9 @@ def link_sessions(conn: Connection, start: date, end: date) -> int:
             scheduled_sessions.c.scheduled_date.between(start, end),
         )
         .order_by(scheduled_sessions.c.scheduled_date, plan_days.c.day_order)
-    ).all()
-    if not sessions:
-        return 0
-    taken = select(scheduled_sessions.c.activity_id).where(
-        scheduled_sessions.c.activity_id.is_not(None)
-    )
-    free: dict[date, list[int]] = defaultdict(list)
-    for a in conn.execute(
-        select(activities.c.garmin_activity_id, activities.c.local_date)
-        .where(
-            activities.c.type == mappers.STRENGTH_TYPE,
-            activities.c.local_date.between(start, end),
-            activities.c.garmin_activity_id.not_in(taken),
-        )
-        .order_by(activities.c.start_time)
-    ):
-        free[a.local_date].append(a.garmin_activity_id)
-    linked = 0
-    for s in sessions:
-        if free[s.scheduled_date]:
-            conn.execute(
-                update(scheduled_sessions)
-                .where(scheduled_sessions.c.id == s.id)
-                .values(activity_id=free[s.scheduled_date].pop(0), status="completed")
-            )
+    ).all():
+        if by_date[s.scheduled_date]:
+            _link(conn, s.id, by_date[s.scheduled_date].pop(0))
             linked += 1
     return linked
 

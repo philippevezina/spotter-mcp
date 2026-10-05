@@ -23,6 +23,10 @@ class GarminUnavailable(GarminError):
     """Garmin could not be reached or returned a server error. Safe to retry later."""
 
 
+class GarminNotFound(GarminError):
+    """Garmin returned 404: the workout or schedule no longer exists."""
+
+
 class GarminTokensMissing(GarminError):
     def __init__(self) -> None:
         super().__init__(f"No Garmin tokens stored. {RELOGIN_HINT}")

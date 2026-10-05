@@ -468,3 +468,52 @@ Notes from the conversation:
 - Claude read "it should link 6 sessions" as a session count and asked about it before activating. That was reasonable: the prompt was ambiguous.
 - `create_plan` has no start date, so Claude said it "couldn't set" one. Activation is a separate step by design. Claude handled it correctly.
 - Claude added extra secondary muscles while curating (core on squat, deadlift and OHP; chest on OHP; shoulders on row). These affect only the volume warnings.
+
+## 2026-10-04: Phase 5 ships as two PRs
+
+- 5a: `spotter.garmin.workouts`, the Garmin write calls, `activities.garmin_workout_id`, linking by workout id, `met_prescription`, and stored targets in progression. Checked locally.
+- 5b: `push_session`, `unschedule_session`, Garmin cleanup on close and replace, planned vs actual in the snapshot, interim instructions, deploy and the exit check.
+Status: decided.
+
+## 2026-10-04: Phase 5 choices made with the athlete
+
+- `push_session` takes optional sets. Without them it pushes the current `propose_next_session` output, so Claude never retypes weights it did not change.
+- A pushed session may hold any curated exercise. Exercises not on the plan day are reported as `off_plan` and logged once per session as a `swap` adjustment.
+- `unschedule_session` takes an optional `new_date`. With it, the session moves and goes back to `planned`, ready to push again. Without it, the session is `skipped`. The `moved` status stays unused.
+- The exit check runs on the athlete's real first block. Phase 6 is not a prerequisite: 5b adds the push rules to the interim instructions.
+Status: decided.
+
+## 2026-10-04: Workout JSON is built by Spotter, uploaded with upload_workout
+
+Why: only `spotter.garmin.client` may import `garminconnect`, and the library's strength helpers send step weights in grams, which the watch does not show.
+Decision: `spotter.garmin.workouts` builds the dict itself, in the shape Garmin accepted in Phase 0 check 3, with kg weights at 2 decimals. The client sends it with `upload_workout` and `update_workout`, not `upload_strength_workout`. A snapshot test pins the JSON.
+- Identical sets form one repeat group. Its rest step follows every set. Different sets become exercise and rest step pairs.
+- Rest follows every set except the last set of the workout.
+- `estimatedDurationInSecs` is a rough estimate: 45 s per set plus rest.
+- Bodyweight steps carry no weight.
+Status: decided. SPEC 8.3 updated.
+
+## 2026-10-04: Removing a missing workout is not an error
+
+garminconnect 0.3.17 raises `GarminConnectNotFoundError` on a 404. The client maps it to `GarminNotFound`. `unschedule_workout` and `delete_workout` return `False` when the item is already gone, so cleanup can be retried safely.
+Status: decided. Still to confirm against Garmin during the exit check.
+
+## 2026-10-04: Linking by workout id
+
+- `activities.garmin_workout_id` (migration 0003) holds the summary's `workoutId`, backfilled from `raw_json`.
+- `link_sessions` first links each open session whose `garmin_workout_id` matches a strength activity in the sync window, whatever the session's date. A workout done a day late still links to its session. The date match then runs on the remaining activities.
+- If two activities carry the same workout id, the earliest one links.
+Status: decided. SPEC sections 7 and 9 updated.
+
+## 2026-10-04: met_prescription
+
+- An exercise met its prescription when every prescribed set has its own performed set with at least its reps at at least its weight. Weights are compared in lb after display rounding (0.5 lb).
+- The match ignores order. A skipped warm-up, an extra set, or sets done out of order are not misses. It is solved as a small bipartite matching, because a greedy match fails cases like targets 200 × 3 and 150 × 8 against sets 210 × 3 and 200 × 8.
+- Stats rebuilds compute it. Every stats row of a linked activity gets the session id. `met_prescription` is null for exercises the session did not prescribe.
+- Linking rebuilds the activity's stats, and so does every later sync of that activity.
+Status: decided.
+
+## 2026-10-04: Progression reads stored targets
+
+An exposure linked to a pushed session carries the target reps of the sets prescribed at the top weight, in set order. Back-off targets are left out, because progression judges only sets at the working weight. Exposures with no pushed prescription keep the Phase 4 behavior.
+Status: decided.

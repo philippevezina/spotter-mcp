@@ -21,14 +21,17 @@ from spotter.db.schema import (
     performed_sets,
     plan_days,
     plans,
+    prescribed_sets,
     scheduled_sessions,
     sync_state,
 )
 from spotter.db.seed import seed_exercises
 from spotter.garmin.client import CatalogEntry
 from spotter.garmin.errors import GarminRateLimited
+from spotter.mcp.tools.history import exposures
 from spotter.sync import stats
 from spotter.sync.sync import LOCK_KEY, link_sessions, run_sync
+from spotter.units import lb_to_kg
 
 FIXTURES = Path(__file__).parent / "fixtures" / "garmin"
 NOW = datetime(2026, 10, 4, 16, 0, tzinfo=UTC)  # noon in Toronto
@@ -427,3 +430,130 @@ def test_link_sessions_respects_the_window(catalog: Engine) -> None:
         assert link_sessions(conn, date(2026, 10, 1), date(2026, 10, 4)) == 0
         assert link_sessions(conn, date(2026, 9, 1), date(2026, 10, 4)) == 1
     assert _links(catalog)[ids[(1, 1)]] == (1, "completed")
+
+
+# Linking by pushed workout id and judging against the prescription (Phase 5) -------
+
+
+def _push(db: Engine, session_id: int, workout_id: int, sets: list[tuple[int, int]]) -> int:
+    """Mark a session pushed with a workout id and prescribe bench sets (lb, reps)."""
+    with db.begin() as conn:
+        bench = conn.execute(
+            select(exercises.c.id).where(exercises.c.garmin_name == BENCH[1])
+        ).scalar_one()
+        conn.execute(
+            update(scheduled_sessions)
+            .where(scheduled_sessions.c.id == session_id)
+            .values(status="pushed", garmin_workout_id=workout_id)
+        )
+        conn.execute(
+            insert(prescribed_sets),
+            [
+                {
+                    "scheduled_session_id": session_id,
+                    "exercise_id": bench,
+                    "set_no": n,
+                    "target_reps": reps,
+                    "target_weight_kg": lb_to_kg(lb, 5),
+                }
+                for n, (lb, reps) in enumerate(sets, start=1)
+            ],
+        )
+        return bench
+
+
+def _from_workout(activity_id: int, start_gmt: str, workout_id: int) -> dict[str, Any]:
+    return {**strength(activity_id, start_gmt), "workoutId": workout_id}
+
+
+def _met(db: Engine, activity_id: int) -> list[tuple[int | None, bool | None]]:
+    with db.connect() as conn:
+        return [
+            (r.scheduled_session_id, r.met_prescription)
+            for r in conn.execute(
+                select(exercise_session_stats).where(
+                    exercise_session_stats.c.activity_id == activity_id
+                )
+            )
+        ]
+
+
+def test_sync_links_by_workout_id_before_date(catalog: Engine) -> None:
+    ids = _schedule(
+        catalog,
+        [
+            (1, 1, date(2026, 9, 19), "planned"),  # pushed for the day before
+            (2, 1, date(2026, 9, 20), "planned"),  # same date as the activity
+        ],
+    )
+    _push(catalog, ids[(1, 1)], 501, [(190, 5)])
+    client = FakeClient([_from_workout(1, "2026-09-20 22:00:00", 501)])
+    result = sync(catalog, client, since=date(2026, 9, 1))
+    assert result.linked_sessions == 1
+    assert _links(catalog) == {ids[(1, 1)]: (1, "completed"), ids[(2, 1)]: (None, "planned")}
+    with catalog.connect() as conn:
+        assert conn.execute(select(activities.c.garmin_workout_id)).scalar_one() == 501
+    assert _met(catalog, 1) == [(ids[(1, 1)], True)]
+
+
+def test_unknown_workout_id_falls_back_to_date(catalog: Engine) -> None:
+    ids = _schedule(catalog, [(1, 1, date(2026, 9, 20), "planned")])
+    client = FakeClient([_from_workout(1, "2026-09-20 22:00:00", 999)])
+    assert sync(catalog, client, since=date(2026, 9, 1)).linked_sessions == 1
+    assert _links(catalog) == {ids[(1, 1)]: (1, "completed")}
+    assert _met(catalog, 1) == [(ids[(1, 1)], None)]  # nothing was prescribed
+
+
+def test_one_activity_links_one_session(catalog: Engine) -> None:
+    ids = _schedule(
+        catalog,
+        [(1, 1, date(2026, 9, 20), "planned"), (2, 1, date(2026, 9, 20), "planned")],
+    )
+    _push(catalog, ids[(2, 1)], 501, [(190, 5)])
+    client = FakeClient([_from_workout(1, "2026-09-20 22:00:00", 501)])
+    assert sync(catalog, client, since=date(2026, 9, 1)).linked_sessions == 1
+    assert _links(catalog) == {ids[(1, 1)]: (None, "planned"), ids[(2, 1)]: (1, "completed")}
+
+
+def test_missed_prescription(catalog: Engine) -> None:
+    ids = _schedule(catalog, [(1, 1, date(2026, 9, 20), "planned")])
+    _push(catalog, ids[(1, 1)], 501, [(190, 5), (190, 5)])  # the fixture has one real set
+    sync(
+        catalog, FakeClient([_from_workout(1, "2026-09-20 22:00:00", 501)]), since=date(2026, 9, 1)
+    )
+    assert _met(catalog, 1) == [(ids[(1, 1)], False)]
+
+
+def test_rebuild_keeps_the_link(catalog: Engine) -> None:
+    ids = _schedule(catalog, [(1, 1, date(2026, 9, 20), "planned")])
+    _push(catalog, ids[(1, 1)], 501, [(190, 5)])
+    sync(
+        catalog, FakeClient([_from_workout(1, "2026-09-20 22:00:00", 501)]), since=date(2026, 9, 1)
+    )
+    with catalog.begin() as conn:
+        stats.rebuild_all(conn)
+    assert _met(catalog, 1) == [(ids[(1, 1)], True)]
+
+
+@pytest.mark.parametrize(
+    ("prescribed", "targets"),
+    [
+        pytest.param([(190, 5)], (5,), id="straight sets"),
+        pytest.param([(190, 3), (170, 6), (170, 6)], (3,), id="back-offs left out"),
+    ],
+)
+def test_exposures_carry_stored_targets(
+    catalog: Engine, prescribed: list[tuple[int, int]], targets: tuple[int, ...]
+) -> None:
+    ids = _schedule(catalog, [(1, 1, date(2026, 9, 20), "planned")])
+    bench = _push(catalog, ids[(1, 1)], 501, prescribed)
+    client = FakeClient(
+        [
+            _from_workout(1, "2026-09-20 22:00:00", 501),
+            strength(3, "2026-10-03 22:00:00"),  # not pushed: no stored targets
+        ]
+    )
+    sync(catalog, client, since=date(2026, 9, 1))
+    with catalog.connect() as conn:
+        found = exposures(conn, bench, date(2026, 10, 5))
+    assert [e.targets for e in found] == [targets, None]

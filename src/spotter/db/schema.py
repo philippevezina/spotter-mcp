@@ -188,8 +188,10 @@ activities = Table(
     Column("feel", Integer),
     Column("raw_json", JSONB, nullable=False),
     Column("synced_at", _timestamptz(), nullable=False, server_default=NOW),
+    Column("garmin_workout_id", BigInteger),  # the pushed workout it was started from
 )
 Index("activities_date", activities.c.local_date)
+Index("activities_workout", activities.c.garmin_workout_id)
 
 scheduled_sessions = Table(
     "scheduled_sessions",
