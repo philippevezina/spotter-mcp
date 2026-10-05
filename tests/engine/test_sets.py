@@ -7,8 +7,8 @@ from decimal import Decimal
 import pytest
 
 from spotter.engine.e1rm import epley
-from spotter.engine.sets import summarize, working_sets
-from spotter.engine.types import ExerciseSummary, SetPerformance
+from spotter.engine.sets import met_prescription, summarize, working_sets
+from spotter.engine.types import ExerciseSummary, LoadedSet, SetPerformance
 
 D = Decimal
 
@@ -71,3 +71,55 @@ def test_summarize_bodyweight() -> None:
         volume_kg=D(0),
         working_sets=2,
     )
+
+
+def L(weight: int | None, reps: int) -> LoadedSet:
+    return LoadedSet(None if weight is None else D(weight), reps)
+
+
+@pytest.mark.parametrize(
+    ("done", "prescribed", "expected"),
+    [
+        pytest.param([L(185, 5)] * 3, [L(185, 5)] * 3, True, id="exact hit"),
+        pytest.param(
+            [L(95, 8), L(185, 6), L(185, 5), L(185, 5)],
+            [L(185, 5)] * 3,
+            True,
+            id="warm-up and extra reps",
+        ),
+        pytest.param([L(185, 5), L(185, 5), L(185, 4)], [L(185, 5)] * 3, False, id="rep short"),
+        pytest.param([L(180, 5)] * 3, [L(185, 5)] * 3, False, id="lighter than prescribed"),
+        pytest.param([L(185, 5)] * 2, [L(185, 5)] * 3, False, id="set missing"),
+        pytest.param(
+            [L(185, 5), L(185, 5), L(185, 0)], [L(185, 5)] * 3, False, id="0-rep set does not count"
+        ),
+        pytest.param(
+            [L(205, 5), L(205, 5), L(225, 3)],
+            [L(225, 3), L(205, 5), L(205, 5)],
+            True,
+            id="top set plus back-offs, out of order",
+        ),
+        pytest.param(
+            [L(225, 5), L(225, 5)],
+            [L(225, 3), L(205, 5)],
+            True,
+            id="heavier set covers the lighter target",
+        ),
+        pytest.param(
+            [L(225, 5), L(205, 3)],
+            [L(225, 3), L(205, 5)],
+            False,
+            id="one set cannot cover two targets",
+        ),
+        pytest.param(
+            [L(225, 3), L(205, 3)], [L(225, 3), L(205, 5)], False, id="back-off short of reps"
+        ),
+        pytest.param([L(200, 8), L(210, 3)], [L(200, 3), L(150, 8)], True, id="needs reassignment"),
+        pytest.param([L(None, 8), L(None, 8)], [L(None, 8), L(None, 7)], True, id="bodyweight"),
+        pytest.param([L(185, 5)], [], False, id="no prescription"),
+    ],
+)
+def test_met_prescription(
+    done: list[LoadedSet], prescribed: list[LoadedSet], expected: bool
+) -> None:
+    assert met_prescription(done, prescribed) is expected

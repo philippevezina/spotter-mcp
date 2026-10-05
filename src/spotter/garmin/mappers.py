@@ -42,7 +42,7 @@ def is_strength(summary: dict[str, Any]) -> bool:
 
 
 def workout_id(summary: dict[str, Any]) -> int | None:
-    """The pushed workout this activity was started from, if any (Phase 5 linking)."""
+    """The pushed workout this activity was started from, if any."""
     return _int(summary.get("workoutId"))
 
 
@@ -65,6 +65,7 @@ def map_activity(summary: dict[str, Any], tz: ZoneInfo) -> dict[str, Any]:
         # Garmin's own scales, stored as given: RPE 10-100 (10 per point), feel 0-100.
         "perceived_effort": _int(summary.get("directWorkoutRpe")),
         "feel": _int(summary.get("directWorkoutFeel")),
+        "garmin_workout_id": workout_id(summary),
         "raw_json": summary,
     }
 
