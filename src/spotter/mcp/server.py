@@ -17,7 +17,7 @@ from starlette.applications import Starlette
 from spotter.config import Settings, get_settings
 from spotter.mcp.auth import allow_only, build_auth
 from spotter.mcp.deps import Deps
-from spotter.mcp.tools import admin, calculation, context, write
+from spotter.mcp.tools import admin, calculation, context, garmin_write, write
 
 INSTRUCTIONS = (Path(__file__).parent / "instructions.md").read_text()
 
@@ -31,6 +31,7 @@ def build_server(
     context.register(mcp, deps)
     calculation.register(mcp, deps)
     write.register(mcp, deps)
+    garmin_write.register(mcp, deps)
     admin.register(mcp, deps)
     return mcp
 

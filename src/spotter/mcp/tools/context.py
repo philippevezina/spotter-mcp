@@ -27,6 +27,7 @@ from spotter.db.schema import (
     plan_days,
     plan_exercises,
     plans,
+    prescribed_sets,
     scheduled_sessions,
 )
 from spotter.engine import endurance, progression, readiness, trend
@@ -234,8 +235,13 @@ def plan_detail(conn: Connection, today: date, plan_id: int | None) -> dict[str,
                 "rest_s": e.rest_s,
             }
         )
+    prescribed = (
+        select(prescribed_sets.c.id)
+        .where(prescribed_sets.c.scheduled_session_id == scheduled_sessions.c.id)
+        .exists()
+    )
     schedule = conn.execute(
-        select(scheduled_sessions, plan_days.c.label)
+        select(scheduled_sessions, plan_days.c.label, prescribed.label("prescribed"))
         .join(plan_days, plan_days.c.id == scheduled_sessions.c.plan_day_id)
         .where(plan_days.c.plan_id == plan.id)
         .order_by(scheduled_sessions.c.scheduled_date)
@@ -272,6 +278,8 @@ def plan_detail(conn: Connection, today: date, plan_id: int | None) -> dict[str,
                 "week_no": s.week_no,
                 "date": iso(s.scheduled_date),
                 "status": s.status,
+                "pushed": s.garmin_workout_id is not None,
+                "prescribed": s.prescribed,
                 "activity_id": s.activity_id,
             }
             for s in schedule
@@ -316,6 +324,82 @@ def _session_exercises(
     return out
 
 
+def _planned(conn: Connection, activity_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Planned vs actual for activities linked to a scheduled session. The reference is
+    the pushed prescription, else the plan day's exercises (no set targets)."""
+    linked = conn.execute(
+        select(
+            scheduled_sessions.c.id,
+            scheduled_sessions.c.activity_id,
+            scheduled_sessions.c.plan_day_id,
+            scheduled_sessions.c.week_no,
+            scheduled_sessions.c.garmin_workout_id,
+            plan_days.c.label,
+        )
+        .join(plan_days, plan_days.c.id == scheduled_sessions.c.plan_day_id)
+        .where(scheduled_sessions.c.activity_id.in_(activity_ids))
+    ).all()
+    if not linked:
+        return {}
+    targets: dict[int, dict[int, list[dict[str, Any]]]] = defaultdict(dict)
+    names: dict[int, str] = {}
+    for r in conn.execute(
+        select(prescribed_sets, exercises.c.display_name)
+        .join(exercises, exercises.c.id == prescribed_sets.c.exercise_id)
+        .where(prescribed_sets.c.scheduled_session_id.in_([s.id for s in linked]))
+        .order_by(prescribed_sets.c.id)
+    ):
+        names[r.exercise_id] = r.display_name
+        targets[r.scheduled_session_id].setdefault(r.exercise_id, []).append(
+            {"reps": r.target_reps, "weight_lb": lb(r.target_weight_kg)}
+        )
+    day_exercises: dict[int, list[int]] = defaultdict(list)
+    for r in conn.execute(
+        select(plan_exercises.c.plan_day_id, plan_exercises.c.exercise_id, exercises.c.display_name)
+        .join(exercises, exercises.c.id == plan_exercises.c.exercise_id)
+        .where(plan_exercises.c.plan_day_id.in_([s.plan_day_id for s in linked]))
+        .order_by(plan_exercises.c.position)
+    ):
+        names[r.exercise_id] = r.display_name
+        day_exercises[r.plan_day_id].append(r.exercise_id)
+    performed: dict[int, dict[int, bool | None]] = defaultdict(dict)
+    for r in conn.execute(
+        select(
+            exercise_session_stats.c.activity_id,
+            exercise_session_stats.c.exercise_id,
+            exercise_session_stats.c.met_prescription,
+            exercises.c.display_name,
+        )
+        .join(exercises, exercises.c.id == exercise_session_stats.c.exercise_id)
+        .where(exercise_session_stats.c.activity_id.in_(activity_ids))
+    ):
+        names[r.exercise_id] = r.display_name
+        performed[r.activity_id][r.exercise_id] = r.met_prescription
+
+    def ref(i: int) -> dict[str, Any]:
+        return {"exercise_id": i, "name": names[i]}
+
+    out: dict[int, dict[str, Any]] = {}
+    for s in linked:
+        rx = targets.get(s.id, {})
+        planned_ids = list(rx) or day_exercises[s.plan_day_id]
+        done = performed[s.activity_id]
+        out[s.activity_id] = {
+            "scheduled_session_id": s.id,
+            "label": s.label,
+            "week_no": s.week_no,
+            "pushed": s.garmin_workout_id is not None,
+            "exercises": [
+                {**ref(i), "prescribed": rx.get(i), "met_prescription": done[i]}
+                for i in planned_ids
+                if i in done
+            ],
+            "not_done": [ref(i) for i in planned_ids if i not in done],
+            "off_plan": [ref(i) for i in done if i not in planned_ids],
+        }
+    return out
+
+
 def recent_strength(conn: Connection, limit: int = RECENT_SESSIONS) -> list[dict[str, Any]]:
     sessions = conn.execute(
         select(activities.c.garmin_activity_id, activities.c.local_date, activities.c.duration_s)
@@ -325,6 +409,7 @@ def recent_strength(conn: Connection, limit: int = RECENT_SESSIONS) -> list[dict
     ).all()
     ids = [s.garmin_activity_id for s in sessions]
     per = _session_exercises(conn, ids)
+    planned = _planned(conn, ids)
     unmapped: dict[int, int] = dict(
         conn.execute(
             select(performed_sets.c.activity_id, func.count())
@@ -339,7 +424,7 @@ def recent_strength(conn: Connection, limit: int = RECENT_SESSIONS) -> list[dict
             "duration_min": minutes(s.duration_s),
             "exercises": per[s.garmin_activity_id],
             "unmapped_sets": unmapped.get(s.garmin_activity_id, 0),
-            "planned": None,  # linked to scheduled sessions in Phase 5
+            "planned": planned.get(s.garmin_activity_id),
         }
         for s in sessions
     ]
