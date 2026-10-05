@@ -29,12 +29,13 @@ from spotter.db.schema import (
     plans,
     scheduled_sessions,
 )
-from spotter.engine import endurance, readiness, trend
+from spotter.engine import endurance, progression, readiness, trend
+from spotter.engine.rules import STALL_RESET_MISSES, STALL_WARNING_MISSES
 from spotter.engine.types import DailyReadinessInput, EnduranceActivity, ReadinessDay, TrendPoint
 from spotter.garmin.mappers import STRENGTH_TYPE
 from spotter.mcp.deps import Deps
 from spotter.mcp.serialize import iso, km, lb, minutes, num
-from spotter.mcp.tools import READ_ONLY, GarminError, garmin_sync
+from spotter.mcp.tools import READ_ONLY, GarminError, garmin_sync, history
 
 RECENT_SESSIONS = 3
 STRENGTH_WINDOW_DAYS = 28
@@ -482,11 +483,28 @@ def open_flags(conn: Connection, today: date) -> dict[str, Any]:
             }
             for m in missed
         ],
-        # Null, not []: stall detection arrives in Phase 4 (engine.progression), and an
-        # empty list read as "no stalls" in the Phase 3 exit check.
-        "stalls": None,
-        "stalls_note": "Stall detection is not available yet. Do not report stalls as absent.",
+        **_stalls(conn, today),
     }
+
+
+def _stalls(conn: Connection, today: date) -> dict[str, Any]:
+    """Current miss streaks of 2 or more in the active plan (A.4), re-derived from history."""
+    plan = _active_plan(conn)
+    if plan is None or plan.start_date is None:
+        return {"stalls": [], "stalls_note": "No active plan."}
+    deloads = history.deload_weeks(conn, plan)
+    out = []
+    for exercise_id, (name, rx) in history.plan_prescriptions(conn, plan).items():
+        exposures = [
+            e
+            for e in history.exposures(conn, exercise_id, today + timedelta(days=1), plan, deloads)
+            if e.local_date >= plan.start_date and not e.deload
+        ]
+        misses = progression.stall_streak(rx, exposures)
+        if misses >= STALL_WARNING_MISSES:
+            flag = "stall" if misses >= STALL_RESET_MISSES else "stall_warning"
+            out.append({"exercise_id": exercise_id, "name": name, "flag": flag, "misses": misses})
+    return {"stalls": out}
 
 
 # Readiness and endurance ----------------------------------------------------
@@ -726,9 +744,9 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         10 minutes, unless force_sync) and returns: sync status, athlete profile, active plan,
         readiness today plus 7 and 28 day counts, endurance load and flags, the last 3 strength
         sessions, a 28-day per-exercise strength rollup, and open flags (unmapped exercises,
-        missed sessions). If sync fails, `sync.error` says why and the rest uses stored data.
-        Endurance here covers 7 days; use get_endurance_load for longer history.
-        Loads in lb, distances in km."""
+        missed sessions, stalls in the active plan). If sync fails, `sync.error` says why and
+        the rest uses stored data. Endurance here covers 7 days; use get_endurance_load for
+        longer history. Loads in lb, distances in km."""
         try:
             sync = garmin_sync(deps, force=force_sync)
         except GarminError as exc:

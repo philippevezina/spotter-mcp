@@ -73,7 +73,8 @@ def test_snapshot_syncs_and_summarizes(call: Call, garmin: FakeGarmin) -> None:
     assert snap["endurance"]["last_7_days"]["run"]["sessions"] == 0
     assert snap["flags"]["unmapped_exercises"] == []
     assert snap["flags"]["missed_sessions"] == []
-    assert snap["flags"]["stalls"] is None  # not evaluated before Phase 4, never "none found"
+    assert snap["flags"]["stalls"] == []
+    assert snap["flags"]["stalls_note"] == "No active plan."
 
 
 def test_snapshot_skips_recent_sync_without_opening_garmin(call: Call, garmin: FakeGarmin) -> None:

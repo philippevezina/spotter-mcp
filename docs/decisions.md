@@ -390,3 +390,49 @@ Status: decided.
 Why: `evaluate_plan` needs completed sessions for adherence, and Phase 4 has no other way to know a session happened.
 Decision: at the end of every sync, `link_sessions` attaches each open session (`planned` or `pushed`, no activity) in the window to the earliest strength activity of its local date that no session holds yet, and sets it `completed`. Sessions of one date go in plan day order. `activate_plan` runs it too, for retroactive starts. Phase 5 adds the workout-id match ahead of the date match.
 Status: decided. SPEC sections 9 and 15 updated.
+
+## 2026-10-04: Phase 4b tool details
+
+- **Close or replace skips every open session**, past ones too, not only future ones. A past open session was missed anyway, and `skipped` still counts as missed in adherence. Otherwise it would stay in `missed_sessions` after the plan ends. This refines "Closing or replacing a plan" above.
+- **`end_criteria.max_weeks` defaults to the plan's `weeks`**, not the A.10 default of 6. Otherwise an 8-week block Claude chose on purpose would be told to end at week 6. The other three criteria keep the A.10 defaults, and the full object is stored.
+- **Comparable recent history** (A.8, new-plan volume of 10 to 12 sets): any exercise in the plan has a performed set in the last 12 weeks.
+- **Proposal history** is the 12 weeks of activities dated before the session. Endurance interference applies on any date and uses the activities stored so far. Readiness applies only when the session is today (4a decision).
+- **An exercise on two days of a plan**: stalls in the snapshot and `evaluate_plan` use its first occurrence (day order, then position).
+- **Curation defaults.** Increment is 5 lb for barbell, dumbbell (per hand), machine, cable and bodyweight_plus (the logged load is the added weight). Bodyweight has none. `e1rm_eligible` defaults to true for barbell and dumbbell lifts with a compound pattern (not isolation, core or carry). Changing it rebuilds that exercise's stats.
+- **`activate_plan`** takes a start date up to 28 days back or ahead. Each day's session falls on its weekday inside week N's 7-day window. Calling again with the same start returns the schedule unchanged. Any other call on a non-draft plan is an error.
+- **`create_plan` is not deduplicated.** Each call saves a new draft, and drafts have no effect until activated.
+- **Snapshot stalls** list current miss streaks of 2 or more in the active plan. The list is `[]` (not null) once a plan is active. With no plan it is `[]` with the note "No active plan."
+- **Commits.** The write and calculation tools, the shared loaders and the snapshot stalls landed in one commit. The server imports all of them, and one test module covers them end to end.
+Status: decided.
+
+## 2026-10-04: Phase 4 test sessions
+
+`spikes/seed_test_sessions.py --set phase4` seeds 7 private strength sessions. Warm-ups stay under 60 % of the top set. The plan starts on Monday 2026-09-14 and runs 6 weeks, with `progression_model` linear. Upper runs on Tuesday: OHP main 3×5, Bench secondary 3×6–8, DB Row accessory 3×8–12. Lower runs on Thursday: Squat main 3×5, Deadlift secondary 3×8–10 at RIR 2. Every lift uses barbell or dumbbell increments of 5 lb. Run the check on 2026-10-05, so the week-4 sessions (Tuesday 10-06, Thursday 10-08) are not today and readiness is `not_applicable`. The Oct 3 run is outside the Lower day's 48 h.
+
+| # | Date | Session | Sets (lb × reps) |
+|---|---|---|---|
+| 1 | 2026-09-07 | before the plan | Deadlift 135×5, 315×5, 315×5 |
+| 2, 4 | 09-15, 09-22 | Upper W1, W2 | OHP 45×5, 115×5,4,4. Bench 95×8, 185×7,7,6. DB Row 60×9,9,8 |
+| 6 | 09-29 | Upper W3 | OHP 45×5, 115×5,4,4. Bench 95×8, 185×8,8,8. DB Row 60×10,10,9 |
+| 3, 5, 7 | 09-17, 09-24, 10-01 | Lower W1–W3 | Squat 95×5, then 205, 215, 225 × 5,5,5 |
+
+Expected proposals, computed by hand from A.3, A.4 and the Phase 4 decisions:
+
+| # | Scenario | Lift (session) | Expected | Why |
+|---|---|---|---|---|
+| 1 | Linear hit, lower body | Squat (Lower W4) | 235 × 5,5,5, `linear:+10lb` | 225 hit 5,5,5; squat pattern adds 10 lb |
+| 2 | Double progression, add reps | DB Row (Upper W4) | 60 × 11,11,10, `double_progression:+1rep` | All sets ≥ 8, not all at 12: each set +1 |
+| 3 | Double progression, add load | Bench (Upper W4) | 190 × 6,6,6, `double_progression:+5lb` | All sets at rep_max 8, RIR unknown |
+| 4 | Stall reset | OHP (Upper W4) | 100 × 5,5,5, `reset:-10%`, flag `stall` | 3 misses at 115 in the plan; 115 × 0.9 = 103.5, rounded down to 100 |
+| 5 | Estimate from history | Deadlift (Lower W4) | 275 × 8,8,8, `estimate_from_history` | 315 × (1 + 5/30) = 367.5; ÷ (1 + 10/30) = 275.6, rounded down to 275 |
+
+Also expected on 2026-10-05:
+- `evaluate_plan` returns `continue`, week 4 of 6, adherence 4/4 = 1.0 over 09-21 to 10-04, reset_lifts [OHP] (1 < 2).
+- The snapshot shows OHP `stall` with 3 misses.
+- `activate_plan` links 6 sessions.
+
+The same scenarios pass as `tests/mcp/test_planning.py::test_exit_scenarios` against the engine.
+Cleanup:
+- `--set phase4 --delete` unlinks the scheduled sessions and removes the activities.
+- `--delete-plan <id>` removes the test plan, only if the athlete agrees.
+Status: expected values recorded. Live check pending.
