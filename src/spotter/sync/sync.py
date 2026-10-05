@@ -7,18 +7,21 @@ then daily metrics (`spotter.sync.metrics`) under the same lock and budget.
   partial run keeps what it did. An activity row with type strength_training
   therefore always has its sets.
 - The cursor moves only when a run completes.
+- Strength activities link to open scheduled sessions on the same local date
+  (`link_sessions`), so plan adherence works before Phase 5 adds workout ids.
 """
 
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Connection, Engine, delete, func, select
+from sqlalchemy import Connection, Engine, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from spotter.db.schema import (
@@ -27,6 +30,8 @@ from spotter.db.schema import (
     exercise_aliases,
     exercises,
     performed_sets,
+    plan_days,
+    scheduled_sessions,
     sync_state,
 )
 from spotter.garmin import mappers
@@ -40,6 +45,7 @@ MIN_INTERVAL = timedelta(minutes=10)  # SPEC 8.5, unless force
 OVERLAP_DAYS = 2  # re-read recent strength sets to catch edits made in the app
 DEFAULT_LOOKBACK_DAYS = 28  # first sync without a backfill
 DEFAULT_BUDGET_S = 60.0
+OPEN_SESSIONS = ("planned", "pushed")
 
 
 class ActivitySource(Protocol):
@@ -62,6 +68,7 @@ class SyncResult:
     unmapped_sets: int = 0
     metric_days: int = 0
     metric_day_fetches: int = 0
+    linked_sessions: int = 0
     partial: bool = False
 
     def as_dict(self) -> dict[str, Any]:
@@ -124,6 +131,51 @@ def _store_strength(
         conn.execute(insert(performed_sets), sets)
     rebuild_activity_stats(conn, activity_id)
     return unmapped
+
+
+def link_sessions(conn: Connection, start: date, end: date) -> int:
+    """Link open sessions dated `start` to `end` to strength activities on the same date.
+
+    Each session takes the earliest strength activity of its date not yet linked to any
+    session; sessions of one date go in plan day order. Linked sessions become
+    `completed`. Idempotent. Callers own the transaction. Returns the number linked.
+    """
+    sessions = conn.execute(
+        select(scheduled_sessions.c.id, scheduled_sessions.c.scheduled_date)
+        .join(plan_days, plan_days.c.id == scheduled_sessions.c.plan_day_id)
+        .where(
+            scheduled_sessions.c.status.in_(OPEN_SESSIONS),
+            scheduled_sessions.c.activity_id.is_(None),
+            scheduled_sessions.c.scheduled_date.between(start, end),
+        )
+        .order_by(scheduled_sessions.c.scheduled_date, plan_days.c.day_order)
+    ).all()
+    if not sessions:
+        return 0
+    taken = select(scheduled_sessions.c.activity_id).where(
+        scheduled_sessions.c.activity_id.is_not(None)
+    )
+    free: dict[date, list[int]] = defaultdict(list)
+    for a in conn.execute(
+        select(activities.c.garmin_activity_id, activities.c.local_date)
+        .where(
+            activities.c.type == mappers.STRENGTH_TYPE,
+            activities.c.local_date.between(start, end),
+            activities.c.garmin_activity_id.not_in(taken),
+        )
+        .order_by(activities.c.start_time)
+    ):
+        free[a.local_date].append(a.garmin_activity_id)
+    linked = 0
+    for s in sessions:
+        if free[s.scheduled_date]:
+            conn.execute(
+                update(scheduled_sessions)
+                .where(scheduled_sessions.c.id == s.id)
+                .values(activity_id=free[s.scheduled_date].pop(0), status="completed")
+            )
+            linked += 1
+    return linked
 
 
 def _window_start(cursor: dict[str, Any] | None, since: date | None, today: date) -> date:
@@ -230,6 +282,9 @@ def _run_locked(
             with engine.begin() as conn:
                 _upsert_activity(conn, row)
         result.activities += 1
+
+    with engine.begin() as conn:
+        result.linked_sessions = link_sessions(conn, result.start, today)
 
     if not result.partial:
         with engine.begin() as conn:

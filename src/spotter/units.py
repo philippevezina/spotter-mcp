@@ -5,7 +5,7 @@ Rule: round to the achievable lb increment first, then convert. Display rounds t
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 KG_PER_LB = Decimal("0.45359237")  # exact by definition
 STORAGE_KG = Decimal("0.001")  # NUMERIC(7,3)
@@ -19,16 +19,25 @@ def _dec(value: Number) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
-def _round_to(value: Decimal, step: Decimal) -> Decimal:
-    return (value / step).quantize(Decimal(1), ROUND_HALF_UP) * step
+def _round_to(value: Decimal, step: Decimal, rounding: str = ROUND_HALF_UP) -> Decimal:
+    return (value / step).quantize(Decimal(1), rounding) * step
+
+
+def _increment(increment_lb: Number) -> Decimal:
+    inc = _dec(increment_lb)
+    if inc <= 0:
+        raise ValueError("increment_lb must be positive")
+    return inc
 
 
 def round_lb(lb: Number, increment_lb: Number) -> Decimal:
     """Round a load to the nearest achievable increment, half up."""
-    inc = _dec(increment_lb)
-    if inc <= 0:
-        raise ValueError("increment_lb must be positive")
-    return _round_to(_dec(lb), inc)
+    return _round_to(_dec(lb), _increment(increment_lb))
+
+
+def floor_lb(lb: Number, increment_lb: Number) -> Decimal:
+    """Round a load down to an achievable increment (resets and estimates)."""
+    return _round_to(_dec(lb), _increment(increment_lb), ROUND_FLOOR)
 
 
 def lb_to_kg(lb: Number, increment_lb: Number) -> Decimal:

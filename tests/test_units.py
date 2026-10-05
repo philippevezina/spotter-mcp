@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from spotter.units import garmin_step_kg, grams_to_kg, kg_to_lb, lb_to_kg, round_lb
+from spotter.units import floor_lb, garmin_step_kg, grams_to_kg, kg_to_lb, lb_to_kg, round_lb
 
 
 @pytest.mark.parametrize(
@@ -20,6 +20,19 @@ from spotter.units import garmin_step_kg, grams_to_kg, kg_to_lb, lb_to_kg, round
 )
 def test_round_lb(lb: float, increment: float, expected: str) -> None:
     assert round_lb(lb, increment) == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("lb", "increment", "expected"),
+    [(103.5, 5, "100"), (100, 5, "100"), (104.99, 2.5, "102.5"), (275.625, 5, "275")],
+)
+def test_floor_lb(lb: float, increment: float, expected: str) -> None:
+    assert floor_lb(lb, increment) == Decimal(expected)
+
+
+def test_floor_lb_rejects_bad_increment() -> None:
+    with pytest.raises(ValueError):
+        floor_lb(100, -5)
 
 
 def test_round_lb_rejects_bad_increment() -> None:

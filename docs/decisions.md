@@ -350,3 +350,43 @@ Exit check: from the phone, "summarize my last 4 weeks of training" returned 8 s
 Two gaps found in Claude's answer, both fixed in the snapshot after the check:
 - It said "no stalls" because `flags.stalls` was `[]`, but stall detection only arrives in Phase 4. `stalls` is now `null`, with a note telling Claude not to report stalls as absent.
 - It said it could not see earlier running without calling `get_endurance_load`. The snapshot description now points to that tool for history beyond 7 days.
+
+## 2026-10-04: Phase 4 ships as two PRs
+
+- 4a: `engine.progression`, `engine.plan_eval`, `engine.volume`, `units.floor_lb`, and sync linking. Checked locally.
+- 4b: the ten planning tools, stalls in the snapshot, interim instructions, deploy and the exit check.
+Status: decided.
+
+## 2026-10-04: Phase 4 progression decisions
+
+Nothing is pushed until Phase 5, so `prescribed_sets` stay empty and every exposure is judged against `plan_exercises`. The engine takes optional per-set targets, so Phase 5 can pass prescribed targets without new rules.
+
+- **A.3 double_progression step 1 was inverted.** It said "RIR ≤ `target_rir`", which blocked an easy session and allowed a grinder. Now: add load unless RIR < `target_rir − 1`. coaching-rules.md is corrected.
+- **Model scope.** `plans.progression_model` applies to `main` lifts. `secondary` and `accessory` use double_progression (A.3 defaults). `progression_override {"model": ...}` on a plan exercise wins over both.
+- **Working weight.** The top working-set weight. Progression reads the sets done at it, so back-off sets are ignored. Bodyweight work reads every working set. Only the first `sets` sets count.
+- **Hit and miss.** Miss: any counted set below `rep_min`. Linear target is `rep_max`; reps between `rep_min` and `rep_max` on a linear lift hold and are not a miss. Double and rir_based count a hit at `rep_min`.
+- **Short session.** Fewer sets than planned at the working weight holds the prescription. It is not a miss, and the stall streak skips it. A time-short day is not a strength failure.
+- **Stall streak.** Consecutive misses at the same working weight, counted only from exposures on or after the plan start. Deload and short exposures are skipped. A hit, a hold or a weight change ends it. 2 holds with `stall_warning`; 3 or more resets (−10 %, rounded down) with `stall`. Re-derived from history on every call, never stored.
+- **First exposure in a plan at a new rep range.** When the last exposure's reps fall outside the new range, the load comes from the best Epley estimate over working sets of 1 to 10 reps in the last 12 weeks, solved for `rep_min + target_rir` reps and rounded down (`estimate_from_history`). This uses any exercise, not only `e1rm_eligible` ones, because it only estimates a starting load. Bodyweight history, or history above 10 reps only, returns `needs_calibration`.
+- **Targets.** Double step 2 targets each set at its reps + 1, capped at `rep_max`. Step 3 ("same targets") uses `rep_min` on every set, since Phase 4 has no stored targets. A hold keeps the performed reps, clamped to the range.
+- **Linear step.** +5 lb upper body, +10 lb lower body (pattern squat, hinge or lunge), rounded to the increment and at least one increment.
+- **Rounding.** Increases round to the nearest increment; holds and decreases round down, so an off-grid logged weight never creeps up on a hold. Barbell loads never go below 45 lb.
+- **Bodyweight.** Reps-only double progression. At `rep_max` on every set the prescription holds with `bodyweight_at_rep_max`, so Claude can suggest a harder variation or added load. An exercise with no increment behaves the same.
+- **rir_based.** "Within target" is `target_rir − 1` to `target_rir`. "Second time in a row" means the previous exposure in this plan, at the same weight, was also below `target_rir − 1`.
+- **Deload.** `plans.deload_week` and any `record_adjustment(kind="deload", payload={"week_no": N})` mark deload weeks. Week N runs from `start_date + 7(N − 1)` for 7 days. Exposures in a deload week are left out of progression history. A deload proposal starts from the last non-deload weight: sets halved (rounded up), load −10 % (nearest increment), `target_rir` +2.
+- **Readiness modifiers (A.6)** apply only when the session is today, since readiness is unknown for other dates. Amber and red keep the last weight and reps whenever the proposal would progress; resets and holds pass through. Red also adds 1 to `target_rir` and removes a set from main and secondary lifts (minimum 2). Endurance interference (A.7) stops load increases on lower-body main lifts only. On a deload week only the deload rules apply.
+Status: decided.
+
+## 2026-10-04: Phase 4 planning decisions
+
+- **Scheduling.** Each plan day runs once a week (the schema's `UNIQUE (plan_day_id, week_no)`), so `sessions_per_week` equals the number of days. Every day needs a distinct `preferred_weekday`. Week 1 is the 7 days starting at `start_date`. `start_date` may be up to 28 days back, so a plan can start retroactively and link sessions already done.
+- **Muscle vocabulary** for curation and volume: chest, back, shoulders, biceps, triceps, quads, hamstrings, glutes, calves, core. Coarse on purpose, so the 8 to 20 weekly sets range from A.8 stays meaningful.
+- **Goals.** e1RM targets are stored in kg with `target_unit = "e1rm"`, like every other weight. Tools take and return lb. SPEC's `lb_e1rm` comment is superseded.
+- **Closing or replacing a plan** sets its open future sessions to `skipped`. Phase 5 must also unschedule pushed ones in Garmin.
+Status: decided.
+
+## 2026-10-04: Sync links sessions by date from Phase 4
+
+Why: `evaluate_plan` needs completed sessions for adherence, and Phase 4 has no other way to know a session happened.
+Decision: at the end of every sync, `link_sessions` attaches each open session (`planned` or `pushed`, no activity) in the window to the earliest strength activity of its local date that no session holds yet, and sets it `completed`. Sessions of one date go in plan day order. `activate_plan` runs it too, for retroactive starts. Phase 5 adds the workout-id match ahead of the date match.
+Status: decided. SPEC sections 9 and 15 updated.

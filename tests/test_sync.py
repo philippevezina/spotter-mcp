@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, func, select, text, update
+from sqlalchemy import Engine, func, insert, select, text, update
 
 from spotter.db.schema import (
     activities,
@@ -19,13 +19,16 @@ from spotter.db.schema import (
     exercise_session_stats,
     exercises,
     performed_sets,
+    plan_days,
+    plans,
+    scheduled_sessions,
     sync_state,
 )
 from spotter.db.seed import seed_exercises
 from spotter.garmin.client import CatalogEntry
 from spotter.garmin.errors import GarminRateLimited
 from spotter.sync import stats
-from spotter.sync.sync import LOCK_KEY, run_sync
+from spotter.sync.sync import LOCK_KEY, link_sessions, run_sync
 
 FIXTURES = Path(__file__).parent / "fixtures" / "garmin"
 NOW = datetime(2026, 10, 4, 16, 0, tzinfo=UTC)  # noon in Toronto
@@ -135,6 +138,7 @@ def test_first_sync(catalog: Engine) -> None:
         "unmapped_sets": 0,
         "metric_days": 14,
         "metric_day_fetches": 14,
+        "linked_sessions": 0,
         "partial": False,
     }
     assert client.set_calls == [3, 1]  # newest first
@@ -336,3 +340,90 @@ def test_rebuild_drops_stale_rows(catalog: Engine) -> None:
         conn.execute(update(performed_sets).values(exercise_id=None))
         assert stats.rebuild_all(conn) == 2
     assert count(catalog, exercise_session_stats) == 0
+
+
+# Linking scheduled sessions (Phase 4, decisions.md) ------------------------------
+
+
+def _schedule(db: Engine, rows: list[tuple[int, int, date, str]]) -> dict[tuple[int, int], int]:
+    """Plan with days 1 and 2; rows are (day_order, week_no, date, status)."""
+    with db.begin() as conn:
+        plan_id = conn.execute(
+            insert(plans)
+            .values(
+                name="Block",
+                status="active",
+                weeks=4,
+                sessions_per_week=2,
+                progression_model="linear",
+                end_criteria={},
+                rationale="test",
+            )
+            .returning(plans.c.id)
+        ).scalar_one()
+        days = {
+            order: conn.execute(
+                insert(plan_days)
+                .values(plan_id=plan_id, label=f"Day {order}", day_order=order)
+                .returning(plan_days.c.id)
+            ).scalar_one()
+            for order in (1, 2)
+        }
+        return {
+            (order, week): conn.execute(
+                insert(scheduled_sessions)
+                .values(plan_day_id=days[order], week_no=week, scheduled_date=day, status=status)
+                .returning(scheduled_sessions.c.id)
+            ).scalar_one()
+            for order, week, day, status in rows
+        }
+
+
+def _links(db: Engine) -> dict[int, tuple[int | None, str]]:
+    with db.connect() as conn:
+        return {
+            r.id: (r.activity_id, r.status)
+            for r in conn.execute(select(scheduled_sessions).order_by(scheduled_sessions.c.id))
+        }
+
+
+def test_sync_links_sessions_by_date(catalog: Engine) -> None:
+    ids = _schedule(
+        catalog,
+        [
+            (2, 1, date(2026, 9, 20), "planned"),  # same date as day 1: day order wins
+            (1, 1, date(2026, 9, 20), "planned"),
+            (1, 2, date(2026, 10, 1), "planned"),  # no activity that day
+            (1, 3, date(2026, 10, 3), "skipped"),  # not open
+            (2, 3, date(2026, 10, 3), "pushed"),
+        ],
+    )
+    client = history()
+    client.summaries.append(run(4, "2026-10-03 12:00:00"))  # a run never links
+    result = sync(catalog, client, since=date(2026, 9, 1))
+    assert result.linked_sessions == 2
+    assert _links(catalog) == {
+        ids[(2, 1)]: (None, "planned"),
+        ids[(1, 1)]: (1, "completed"),
+        ids[(1, 2)]: (None, "planned"),
+        ids[(1, 3)]: (None, "skipped"),
+        ids[(2, 3)]: (3, "completed"),
+    }
+    # Idempotent: a second run links nothing new and moves nothing.
+    assert sync(catalog, client, force=True).linked_sessions == 0
+    assert _links(catalog)[ids[(1, 1)]] == (1, "completed")
+
+
+def test_link_sessions_without_open_sessions(catalog: Engine) -> None:
+    sync(catalog, history(), since=date(2026, 9, 1))
+    with catalog.begin() as conn:
+        assert link_sessions(conn, date(2026, 9, 1), date(2026, 10, 4)) == 0
+
+
+def test_link_sessions_respects_the_window(catalog: Engine) -> None:
+    sync(catalog, history(), since=date(2026, 9, 1))
+    ids = _schedule(catalog, [(1, 1, date(2026, 9, 20), "planned")])
+    with catalog.begin() as conn:
+        assert link_sessions(conn, date(2026, 10, 1), date(2026, 10, 4)) == 0
+        assert link_sessions(conn, date(2026, 9, 1), date(2026, 10, 4)) == 1
+    assert _links(catalog)[ids[(1, 1)]] == (1, "completed")

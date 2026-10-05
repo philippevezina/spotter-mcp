@@ -34,7 +34,7 @@ All loads are in **lb**.
 
 **double_progression** (default for secondary and accessory work)
 
-1. All working sets at `rep_max` and (RIR unknown or RIR ≤ `target_rir`) → add `increment_lb`, reset reps to `rep_min`.
+1. All working sets at `rep_max` and (RIR unknown or RIR ≥ `target_rir − 1`) → add `increment_lb`, reset reps to `rep_min`. (Corrected in Phase 4: the first draft said RIR ≤ `target_rir`, which blocked easy sessions. See decisions.md.)
 2. All working sets at or above `rep_min` → same weight, target +1 rep per set (capped at `rep_max`).
 3. Any set below `rep_min` → same weight, same targets. Count as a miss.
 
