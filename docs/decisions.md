@@ -435,4 +435,36 @@ The same scenarios pass as `tests/mcp/test_planning.py::test_exit_scenarios` aga
 Cleanup:
 - `--set phase4 --delete` unlinks the scheduled sessions and removes the activities.
 - `--delete-plan <id>` removes the test plan, only if the athlete agrees.
-Status: expected values recorded. Live check pending.
+Status: done. Live check passed (see "Phase 4 results").
+
+## Phase 4 results
+
+Checked on 2026-10-04, in the evening in Toronto. The check was planned for 10-05.
+- `uv run pytest` is green (349 tests). The engine has 100 % branch coverage. ruff and mypy are clean. PR #8 is merged and deployed to production.
+- `seed_test_sessions.py --set phase4` created 7 private activities: 24608922869 (09-07), 24608922938 (09-15), 24608923030 (09-17), 24608923136 (09-22), 24608923231 (09-24), 24608923333 (09-29), 24608923425 (10-01). Every set read back at the seeded lb value.
+- `spotter backfill --since 2026-09-01`: 8 activities (the 7 sessions plus one run), 0 unmapped sets, `partial: false`.
+
+Exit check, from the phone:
+- Claude curated the 5 lifts, created plan 1 as a draft, and activated it from 2026-09-14 after the athlete agreed. Activation linked 6 sessions (weeks 1 to 3) and scheduled 6 more, ending 2026-10-25.
+- `propose_next_session` for Upper W4 (10-06) and Lower W4 (10-08) returned exactly the "Phase 4 test sessions" table:
+  - Squat: 235 × 5.
+  - DB Row: 60 × 11/11/10.
+  - Bench: 190 × 6.
+  - OHP: 100 × 5 with `stall` and 3 misses.
+  - Deadlift: 275 × 8 from an e1RM of 367.5.
+- Readiness was `not_applicable`, and there were no interference flags.
+- Claude explained each rule correctly and asked before keeping the OHP reset.
+- `evaluate_plan` was not called from the phone. Running the server's `evaluate` read-only against Neon on 10-04 gave `continue`, week 3 of 6 (week 4 on 10-05, as noted), adherence 4/4 = 1.0, and OHP as the only reset lift. The snapshot showed the OHP `stall`.
+
+Phase 4 exit criteria met. Phase 5 may start.
+
+Cleanup on 2026-10-04, after the athlete confirmed:
+- `--set phase4 --delete` removed the 7 activities from Garmin and Neon, after unlinking 6 sessions.
+- `--delete-plan 1` removed the test plan.
+- Neon again holds 1 activity (the run), no plans and no strength history.
+- The 5 lifts stay curated.
+
+Notes from the conversation:
+- Claude read "it should link 6 sessions" as a session count and asked about it before activating. That was reasonable: the prompt was ambiguous.
+- `create_plan` has no start date, so Claude said it "couldn't set" one. Activation is a separate step by design. Claude handled it correctly.
+- Claude added extra secondary muscles while curating (core on squat, deadlift and OHP; chest on OHP; shoulders on row). These affect only the volume warnings.
