@@ -417,7 +417,7 @@ The daily summary (`get_user_summary`) carries resting HR, Body Battery high and
 - Takes `pg_try_advisory_lock` on a dedicated connection to the unpooled URL (Neon's pooler is in transaction mode). If another sync holds it, skip and use current data.
 - Time budget of 60 s per call. Activities newest first since `sync_state.cursor` minus a 2-day overlap. Stop when the budget is spent and report `partial: true`. The cursor moves only on a complete run. Details in decisions.md ("Sync mechanics").
 - For each strength activity: fetch exercise sets, upsert `performed_sets`, map to `exercises` by `(garmin_category, garmin_name)` (exact match, then `exercise_aliases`), recompute `exercise_session_stats`.
-- Link a strength activity to the `scheduled_session` on the same local date with status `pushed` (Garmin's workout id on the activity, if present, takes priority). Set status `completed`.
+- Link a strength activity to an open `scheduled_session` (`planned` or `pushed`) on the same local date and set status `completed` (Phase 4). From Phase 5, Garmin's workout id on the activity, if present, takes priority.
 - Daily metrics (Phase 3): range calls (HRV, max metrics, body composition) cover the last 14 days on each sync. Per-day calls (sleep, training readiness, daily summary) cover the last 3 days plus any day in that window never fetched per-day. Values get revised after sleep. Upsert by date. Same lock and budget as activities, which run first. Own `sync_state` row `daily_metrics`. Backfill covers the last 28 days of metrics by default. Details in decisions.md ("Daily metrics sync window").
 - Backfill: `spotter backfill --since 2026-01-01` runs locally against the production database, with no time limit.
 
@@ -563,6 +563,9 @@ Exit: from the phone, "summarize my last 4 weeks of training" returns a correct 
 
 ### Phase 4: Planning and progression
 
+Two PRs (decisions.md): 4a is the engine and sync linking, 4b is the tools and deploy.
+
+- Sync links strength activities to scheduled sessions by date (moved up from Phase 5, so adherence works).
 - `spotter.engine.progression` and `spotter.engine.plan_eval` with full rule tests.
 - Tools: `upsert_athlete_profile`, `upsert_goal`, `curate_exercise`, `create_plan`, `activate_plan`, `propose_next_session`, `evaluate_plan`, `record_adjustment`, `add_session_note`, `close_plan`.
 
@@ -572,7 +575,7 @@ Exit: Claude can create and activate a plan from a conversation, and `propose_ne
 
 - `spotter.garmin.workouts` builder with snapshot tests.
 - Tools: `push_session` (with `dry_run`), `unschedule_session`.
-- Sync links completed activities to scheduled sessions.
+- Sync matches completed activities to scheduled sessions by workout id first, then by date.
 
 Exit: a full loop works: propose, push, train with the watch, sync, see planned vs actual in the snapshot.
 
