@@ -1,5 +1,6 @@
-"""Write tools (SPEC 11.3), Phase 4 subset: profile, goals, curation, plans, the
-adjustment log and session notes. Nothing here touches Garmin.
+"""Write tools (SPEC 11.3): profile, goals, curation, plans, the adjustment log and
+session notes. Only close_plan and activate_plan(replace=true) touch Garmin, to remove
+pushed sessions (`garmin_calendar`). Pushing lives in `garmin_write`.
 
 Command functions take a Connection and the athlete's local `today`, and raise
 ToolError. Callers own the transaction. Weights come in and go out as lb.
@@ -43,6 +44,7 @@ from spotter.engine.types import LoadType, Model, Role, VolumeDay, VolumeExercis
 from spotter.mcp.deps import Deps
 from spotter.mcp.serialize import iso, lb, num
 from spotter.mcp.tools.context import OPEN_SESSION, plan_detail
+from spotter.mcp.tools.garmin_calendar import clear_push, pushed_sessions, remove_pushed
 from spotter.mcp.tools.history import MODELS, model_for
 from spotter.sync.stats import rebuild_all
 from spotter.sync.sync import link_sessions
@@ -472,12 +474,14 @@ def session_date(start: date, week_no: int, weekday: str) -> date:
     return week_start + timedelta(days=(WEEKDAYS.index(weekday) - week_start.weekday()) % 7)
 
 
-def activate(
+def _activation(
     conn: Connection, plan_id: int, start_date: date, replace: bool, today: date
-) -> dict[str, Any]:
+) -> tuple[Row[Any], Row[Any] | None] | None:
+    """Check an activation. Returns (plan, active plan to replace), or None when the plan
+    is already active from `start_date` (a repeat call)."""
     plan = _get_plan(conn, plan_id)
     if plan.status == "active" and plan.start_date == start_date:
-        return {"linked": 0, "replaced_plan_id": None, **plan_detail(conn, today, plan_id)}
+        return None
     if plan.status != "draft":
         raise ToolError(
             f"Plan {plan_id} is {plan.status}; only a draft can be activated. "
@@ -495,6 +499,16 @@ def activate(
             f"Plan {active.id} ({active.name}) is active. Pass replace=true to abandon it, "
             "only after the athlete agrees, or close_plan it first."
         )
+    return plan, active
+
+
+def activate(
+    conn: Connection, plan_id: int, start_date: date, replace: bool, today: date
+) -> dict[str, Any]:
+    checked = _activation(conn, plan_id, start_date, replace, today)
+    if checked is None:
+        return {"linked": 0, "replaced_plan_id": None, **plan_detail(conn, today, plan_id)}
+    plan, active = checked
     if active is not None:
         _retire(conn, active.id, "abandoned", today)
 
@@ -731,10 +745,18 @@ def register(mcp: FastMCP, deps: Deps) -> None:
     def activate_plan(plan_id: int, start_date: date, replace: bool = False) -> dict[str, Any]:
         """Activate a draft plan from start_date (up to 28 days back or ahead): schedules one
         session per day per week, and links strength sessions already done since start_date.
-        replace=true abandons the current active plan; use it only after the athlete agrees.
-        Nothing is sent to Garmin. Call only after the athlete confirms the start date."""
+        replace=true abandons the current active plan and removes its pushed sessions from
+        today on from Garmin; use it only after the athlete agrees. Nothing new is sent to
+        Garmin. Call only after the athlete confirms the start date."""
+        with deps.engine.connect() as conn:
+            today = deps.today(conn)
+            checked = _activation(conn, plan_id, start_date, replace, today)
+            active = None if checked is None else checked[1]
+            rows = [] if active is None else pushed_sessions(conn, active.id, today)
+        remove_pushed(deps, rows)
         with deps.engine.begin() as conn:
-            return activate(conn, plan_id, start_date, replace, deps.today(conn))
+            clear_push(conn, [r.id for r in rows])
+            return activate(conn, plan_id, start_date, replace, today)
 
     @mcp.tool(annotations=WRITE)
     def record_adjustment(
@@ -774,7 +796,14 @@ def register(mcp: FastMCP, deps: Deps) -> None:
     @mcp.tool(annotations=IDEMPOTENT)
     def close_plan(plan_id: int, outcome_summary: str) -> dict[str, Any]:
         """Mark the active plan completed with a short summary of what worked, and skip its
-        open sessions. Call when evaluate_plan says end and the athlete agrees, before
-        activating the next block."""
+        open sessions. Pushed sessions from today on are removed from Garmin first; past
+        ones stay on the Garmin calendar. Call when evaluate_plan says end and the athlete
+        agrees, before activating the next block."""
+        with deps.engine.connect() as conn:
+            today = deps.today(conn)
+            plan = _get_plan(conn, plan_id)
+            rows = pushed_sessions(conn, plan_id, today) if plan.status == "active" else []
+        remove_pushed(deps, rows)
         with deps.engine.begin() as conn:
-            return close(conn, plan_id, outcome_summary, deps.today(conn))
+            clear_push(conn, [r.id for r in rows])
+            return close(conn, plan_id, outcome_summary, today)

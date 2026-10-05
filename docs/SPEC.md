@@ -242,7 +242,7 @@ CREATE TABLE scheduled_sessions (
   plan_day_id        bigint NOT NULL REFERENCES plan_days(id) ON DELETE CASCADE,
   week_no            int NOT NULL,
   scheduled_date     date NOT NULL,
-  status             text NOT NULL DEFAULT 'planned',  -- planned|pushed|completed|skipped|moved
+  status             text NOT NULL DEFAULT 'planned',  -- planned|pushed|completed|skipped ('moved' unused, decisions.md)
   garmin_workout_id  bigint,
   garmin_schedule_id bigint,
   activity_id        bigint REFERENCES activities(garmin_activity_id),
@@ -472,11 +472,11 @@ General rules:
 | `curate_exercise` | `exercise_id`, curated fields | Sets pattern, muscles, load type, increment. |
 | `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane) and saves as `draft`. Returns validation warnings. |
 | `activate_plan` | `plan_id`, `start_date` | Ends any active plan as `abandoned` only if `replace=true`. Generates `scheduled_sessions`. |
-| `push_session` | `scheduled_session_id`, `sets`, `dry_run?` | Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it. Repeat pushes replace the workout, never duplicate. |
-| `unschedule_session` | `scheduled_session_id`, `reason` | Removes from Garmin calendar, sets status `skipped` or `moved`. |
+| `push_session` | `scheduled_session_id`, `exercises?`, `dry_run?` | Without `exercises`, pushes the current `propose_next_session` output. Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it once. Repeat pushes update the same workout, never duplicate. Off-plan exercises are allowed and logged as a `swap`. |
+| `unschedule_session` | `scheduled_session_id`, `reason`, `new_date?` | Removes the workout from the Garmin calendar and library and clears the prescription. Without `new_date`: `skipped`. With it: the session moves and is `planned` again. A pushed session dated today or earlier is synced first and never removed once trained. |
 | `record_adjustment` | `plan_id`, `kind`, `reason`, `payload` | Appends to `adjustments`. |
 | `add_session_note` | `text`, `tags?`, `rir_feedback?`, `scheduled_session_id?` | Appends to `session_notes`. |
-| `close_plan` | `plan_id`, `outcome_summary` | Sets `completed`, records end date. |
+| `close_plan` | `plan_id`, `outcome_summary` | Sets `completed`, records end date. Pushed sessions from today on are removed from Garmin first (also on `activate_plan(replace=true)`). |
 
 ### 11.4 Admin
 
@@ -578,7 +578,8 @@ Exit: Claude can create and activate a plan from a conversation, and `propose_ne
 Two PRs (decisions.md): 5a is the builder, Garmin writes and linking, 5b is the tools and deploy.
 
 - `spotter.garmin.workouts` builder with snapshot tests.
-- Tools: `push_session` (with `dry_run`), `unschedule_session`.
+- Tools: `push_session` (with `dry_run`), `unschedule_session` (with `new_date`). `close_plan` and `activate_plan(replace=true)` remove pushed future sessions from Garmin.
+- The snapshot shows planned vs actual for the last strength sessions.
 - Sync matches completed activities to scheduled sessions by workout id first, then by date.
 
 Exit: a full loop works: propose, push, train with the watch, sync, see planned vs actual in the snapshot.

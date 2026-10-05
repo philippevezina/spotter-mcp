@@ -517,3 +517,17 @@ Status: decided.
 
 An exposure linked to a pushed session carries the target reps of the sets prescribed at the top weight, in set order. Back-off targets are left out, because progression judges only sets at the working weight. Exposures with no pushed prescription keep the Phase 4 behavior.
 Status: decided.
+
+## 2026-10-04: Phase 5b tool details
+
+- **Modules.** `push_session` and `unschedule_session` live in `mcp/tools/garmin_write.py`. Removal from Garmin lives in `mcp/tools/garmin_calendar.py`, which `write.py` also uses for close and replace. A separate module avoids an import cycle: `calculation` imports `write`.
+- **Push input.** `exercises` is optional. Without it, the push sends the current proposal and fails when a barbell, dumbbell, machine or cable exercise has no weight (`needs_calibration`). With it, the exercises listed replace the session. Plan exercises left out are returned in `not_pushed`.
+- **Rounding.** Given weights round to the exercise increment, half up. Barbell loads never go below 45 lb. Every change is returned in `rounded`.
+- **rule_fired** is the proposal's rule when the sets match the proposal, `manual` when they differ, and `off_plan` for an exercise not on the plan day. `rest_s` and `target_rir` default to the proposal. An off-plan exercise must pass `rest_s`.
+- **Push order.** Upload, then save the workout id at once in its own transaction, then schedule, then save the prescription and set `pushed` in one transaction. A failure after the upload leaves the workout id, so the retry updates it and nothing is duplicated. A crash between the upload and saving the id can still leave one unscheduled workout in the Garmin library. That is harmless.
+- **Workout deleted in Garmin Connect.** If `update_workout` returns 404, the push unschedules the old entry (ignored if missing), then uploads and schedules a new workout.
+- **unschedule_session.** Only `planned` and `pushed` sessions. A pushed session dated today or earlier runs a forced sync first. If that links the session, it is `completed` and nothing is removed. `new_date` runs from today to the plan's `planned_end_date`, and `week_no` does not change. Without `new_date` the session is `skipped` and logged as `other`. With it, the session is `planned` and logged as `reschedule`. The `moved` status stays unused.
+- **Close and replace.** Garmin first: pushed open sessions dated today or later are unscheduled and deleted. Then one transaction clears their ids and prescriptions and retires the plan. If Garmin fails, the tool errors, the plan is unchanged, and a retry is safe. An invalid activation is rejected before anything is removed. Past pushed sessions keep their ids and stay on the Garmin calendar.
+- **Known gap.** A past pushed session skipped at close no longer links if its activity syncs later, because `link_sessions` links only open sessions. Its sets still count in history, but without the stored targets. Sync before closing a plan if a session may be unsynced.
+- **Planned vs actual.** `recent_strength[].planned` is null for an unlinked activity. For a linked one, the reference is the pushed prescription. For a session linked by date and never pushed, it is the plan day's exercises, with `prescribed: null`. `not_done` lists planned exercises with no sets. `off_plan` lists exercises done but not planned. `get_plan` schedule rows show `pushed` and `prescribed`.
+Status: decided.
