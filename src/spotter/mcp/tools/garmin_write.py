@@ -14,7 +14,7 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Connection, Row, delete, insert, select, update
 
 from spotter.db.schema import (
@@ -51,10 +51,21 @@ OFF_PLAN_RULE = "off_plan"
 
 
 class PushSetIn(BaseModel):
-    reps: Annotated[int, Field(ge=1, le=30)]
+    reps: Annotated[int, Field(ge=1, le=30)] | None = Field(
+        default=None, description="For reps exercises."
+    )
+    hold_s: Annotated[int, Field(ge=5, le=300)] | None = Field(
+        default=None, description="Seconds held, for timed exercises (e.g. planks)."
+    )
     weight_lb: Annotated[float, Field(gt=0, lt=1000)] | None = Field(
         default=None, description="Dumbbells per hand. null for bodyweight."
     )
+
+    @model_validator(mode="after")
+    def _reps_or_hold(self) -> PushSetIn:
+        if (self.reps is None) == (self.hold_s is None):
+            raise ValueError("Give each set reps or hold_s, not both.")
+        return self
 
 
 class PushExerciseIn(BaseModel):
@@ -137,6 +148,14 @@ def _exercise_rows(conn: Connection, ids: list[int]) -> dict[int, Row[Any]]:
     return {r.id: r for r in conn.execute(select(exercises).where(exercises.c.id.in_(ids)))}
 
 
+def _proposed_sets(p: dict[str, Any]) -> tuple[WorkoutSet, ...]:
+    """The proposal's sets: `target_reps`, or `target_hold_s` for a timed exercise."""
+    weight = _dec(p["weight_lb"])
+    if "target_hold_s" in p:
+        return tuple(WorkoutSet(None, weight, h) for h in p["target_hold_s"])
+    return tuple(WorkoutSet(r, weight) for r in p["target_reps"])
+
+
 def _from_proposal(proposal: list[dict[str, Any]], rows: dict[int, Row[Any]]) -> list[_Planned]:
     uncalibrated = [
         p["name"]
@@ -153,7 +172,7 @@ def _from_proposal(proposal: list[dict[str, Any]], rows: dict[int, Row[Any]]) ->
             exercise_id=p["exercise_id"],
             name=p["name"],
             ex=rows[p["exercise_id"]],
-            sets=tuple(WorkoutSet(r, _dec(p["weight_lb"])) for r in p["target_reps"]),
+            sets=_proposed_sets(p),
             rest_s=p["rest_s"],
             target_rir=p["target_rir"],
             rule_fired=p["rule_fired"],
@@ -193,6 +212,11 @@ def _from_input(
         ex = rows[e.exercise_id]
         p = by_id.get(e.exercise_id)
         inc = None if ex.increment_lb is None else Decimal(ex.increment_lb)
+        timed = ex.measure == "time"
+        if any((s.hold_s is None) == timed for s in e.sets):
+            need = "hold_s (it is timed)" if timed else "reps (it is not timed)"
+            errors.append(f"{ex.display_name} takes {need} on every set.")
+            continue
         sets: list[WorkoutSet] = []
         for s in e.sets:
             weight = _dec(s.weight_lb)
@@ -200,7 +224,7 @@ def _from_input(
                 if ex.load_type in NEEDS_WEIGHT:
                     errors.append(f"{ex.display_name} needs a weight on every set.")
                     break
-                sets.append(WorkoutSet(s.reps, None))
+                sets.append(WorkoutSet(s.reps, None, s.hold_s))
                 continue
             if inc is None:
                 errors.append(f"{ex.display_name} has no load increment; pass weight_lb null.")
@@ -212,14 +236,13 @@ def _from_input(
                 rounded.append(
                     {"exercise_id": ex.id, "given_lb": float(weight), "pushed_lb": float(pushed)}
                 )
-            sets.append(WorkoutSet(s.reps, pushed))
+            sets.append(WorkoutSet(s.reps, pushed, s.hold_s))
         if p is None and e.rest_s is None:
             errors.append(f"{ex.display_name} is not on this plan day; pass its rest_s.")
         if p is None:
             rule = OFF_PLAN_RULE
         else:
-            proposed = tuple(WorkoutSet(r, _dec(p["weight_lb"])) for r in p["target_reps"])
-            rule = p["rule_fired"] if tuple(sets) == proposed else MANUAL_RULE
+            rule = p["rule_fired"] if tuple(sets) == _proposed_sets(p) else MANUAL_RULE
         planned.append(
             _Planned(
                 exercise_id=ex.id,
@@ -282,14 +305,16 @@ def _steps(payload: dict[str, Any]) -> int:
     return total
 
 
+def _set_out(s: WorkoutSet) -> dict[str, Any]:
+    amount = {"reps": s.reps} if s.hold_s is None else {"hold_s": s.hold_s}
+    return {**amount, "weight_lb": None if s.weight_lb is None else float(s.weight_lb)}
+
+
 def _planned_out(p: _Planned) -> dict[str, Any]:
     return {
         "exercise_id": p.exercise_id,
         "name": p.name,
-        "sets": [
-            {"reps": s.reps, "weight_lb": None if s.weight_lb is None else float(s.weight_lb)}
-            for s in p.sets
-        ],
+        "sets": [_set_out(s) for s in p.sets],
         "rest_s": p.rest_s,
         "target_rir": p.target_rir,
         "rule_fired": p.rule_fired,
@@ -344,6 +369,7 @@ def _save_push(
                 "exercise_id": p.exercise_id,
                 "set_no": n,
                 "target_reps": w.reps,
+                "target_hold_s": w.hold_s,
                 "target_weight_kg": None
                 if w.weight_lb is None
                 else lb_to_kg(w.weight_lb, Decimal(p.ex.increment_lb)),
@@ -499,7 +525,8 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         prescription. Call only after the athlete confirms the session in this conversation.
         Without exercises, pushes the current propose_next_session output. Pass exercises
         (sets in lb, dumbbells per hand) only for sets that differ from the proposal, and
-        use dry_run=true first to show the athlete the result. Weights round to the
+        give each set reps, or hold_s (seconds) for a timed exercise such as a plank. Use
+        dry_run=true first to show the athlete the result. Weights round to the
         exercise increment; changes are listed in rounded. Exercises not on the plan day
         are allowed, returned in off_plan and logged as a swap. Pushing again updates the
         same workout; it never duplicates. The session must be today or later."""

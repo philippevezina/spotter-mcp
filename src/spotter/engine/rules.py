@@ -57,6 +57,8 @@ RIR_BIG_JUMP_INCREMENTS = 2
 RIR_LOW_BELOW = 1  # reported RIR < target - 1 is harder than planned
 # A.3 double_progression step 1 (decisions.md): add load unless RIR < target - 1.
 DOUBLE_RIR_TOLERANCE = 1
+# A.3 timed holds: double progression adds this many seconds per set instead of 1 rep.
+HOLD_STEP_S = 5
 
 # A.4: stalls. Consecutive misses at the same working weight.
 STALL_WARNING_MISSES = 2

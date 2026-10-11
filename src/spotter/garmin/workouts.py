@@ -44,8 +44,11 @@ SECONDS_PER_SET = 45  # rough time under the bar, only for Garmin's duration est
 
 @dataclass(frozen=True)
 class WorkoutSet:
-    reps: int
+    """Reps, or `hold_s` seconds for a timed exercise (the watch counts it down)."""
+
+    reps: int | None
     weight_lb: Decimal | None  # None for bodyweight; dumbbells per hand
+    hold_s: int | None = None
 
 
 @dataclass(frozen=True)
@@ -69,12 +72,16 @@ def workout_name(label: str, week_no: int, day: date) -> str:
 
 
 def _exercise_step(ex: WorkoutExercise, s: WorkoutSet, order: int) -> dict[str, Any]:
+    timed = s.hold_s is not None
+    value = s.hold_s if timed else s.reps
+    if value is None or (timed and s.reps is not None):
+        raise ValueError(f"{ex.garmin_category}/{ex.garmin_name}: a set needs reps or hold_s")
     step: dict[str, Any] = {
         "type": "ExecutableStepDTO",
         "stepOrder": order,
         "stepType": INTERVAL,
-        "endCondition": END_REPS,
-        "endConditionValue": float(s.reps),
+        "endCondition": END_TIME if timed else END_REPS,
+        "endConditionValue": float(value),
         "targetType": NO_TARGET,
         "category": ex.garmin_category,
     }
@@ -99,6 +106,10 @@ def _rest_step(rest_s: int, order: int) -> dict[str, Any]:
     }
 
 
+def _set_seconds(s: WorkoutSet) -> int:
+    return SECONDS_PER_SET if s.hold_s is None else s.hold_s
+
+
 def _uniform(ex: WorkoutExercise) -> bool:
     return len(ex.sets) > 1 and len(set(ex.sets)) == 1
 
@@ -106,6 +117,7 @@ def _uniform(ex: WorkoutExercise) -> bool:
 def build_workout(workout: Workout) -> dict[str, Any]:
     """The JSON for `upload_workout` and `update_workout`.
 
+    A set ends after its reps, or after its hold time for a timed exercise.
     Identical sets become one repeat group (its rest follows every set). Different
     sets become exercise + rest step pairs, so each set keeps its own weight. Rest
     follows every set except the last one of the workout. Step orders are unique.
@@ -118,7 +130,7 @@ def build_workout(workout: Workout) -> dict[str, Any]:
     last_ex = len(workout.exercises) - 1
     for i, ex in enumerate(workout.exercises):
         rest = ex.rest_s or 0
-        duration += len(ex.sets) * (SECONDS_PER_SET + rest)
+        duration += sum(_set_seconds(s) + rest for s in ex.sets)
         if _uniform(ex):
             inner = [_exercise_step(ex, ex.sets[0], order + 1)]
             if rest:

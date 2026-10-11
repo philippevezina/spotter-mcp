@@ -13,7 +13,7 @@ from typing import Literal
 
 ReadinessClass = Literal["green", "amber", "red"]
 Sport = Literal["run", "ride"]
-TrendMetric = Literal["e1rm", "top_set_weight", "top_set_reps"]
+TrendMetric = Literal["e1rm", "top_set_weight", "top_set_reps", "top_set_hold"]
 TrendDirection = Literal["up", "flat", "down", "insufficient_data"]
 Model = Literal["double_progression", "linear", "rir_based"]
 Role = Literal["main", "secondary", "accessory"]
@@ -22,26 +22,32 @@ Judgement = Literal["hit", "miss", "hold_range", "short"]
 ProposalStatus = Literal["ok", "needs_calibration"]
 StallFlag = Literal["stall_warning", "stall"]
 Recommendation = Literal["continue", "adjust", "end"]
+Measure = Literal["reps", "time"]  # how an exercise is counted: reps, or seconds held
 
 
 @dataclass(frozen=True)
 class SetPerformance:
-    """One performed set. `weight_kg` is None for bodyweight work."""
+    """One performed set. `weight_kg` is None for bodyweight work. `duration_s` is the
+    time Garmin logged; only timed exercises read it."""
 
     weight_kg: Decimal | None
     reps: int | None
+    duration_s: Decimal | None = None
 
 
 @dataclass(frozen=True)
 class ExerciseSummary:
-    """One exercise in one session, over working sets only."""
+    """One exercise in one session, over working sets only. Reps fields and volume are
+    None for a timed exercise; hold fields are None for a reps exercise."""
 
     top_set_weight_kg: Decimal | None
-    top_set_reps: int
+    top_set_reps: int | None
     best_e1rm_kg: Decimal | None
-    total_reps: int
-    volume_kg: Decimal
+    total_reps: int | None
+    volume_kg: Decimal | None
     working_sets: int
+    top_set_hold_s: Decimal | None = None
+    total_hold_s: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,7 @@ class TrendPoint:
     best_e1rm_kg: Decimal | None
     top_set_weight_kg: Decimal | None
     top_set_reps: int | None
+    top_set_hold_s: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -137,7 +144,8 @@ class Trend:
 
 @dataclass(frozen=True)
 class LoadedSet:
-    """One performed set in lb, in set order. `weight_lb` is None for bodyweight work."""
+    """One performed set in lb, in set order. `weight_lb` is None for bodyweight work.
+    `reps` is whole seconds held for a timed exercise (`Prescription.measure`)."""
 
     weight_lb: Decimal | None
     reps: int
@@ -149,6 +157,8 @@ class Prescription:
 
     `lower_body`: the exercise's pattern is squat, hinge or lunge (linear step size,
     endurance interference). `increment_lb` is None when load cannot progress.
+    For a timed exercise (`measure="time"`) `rep_min`, `rep_max` and every rep count are
+    seconds held, and the model is double progression.
     """
 
     sets: int
@@ -161,6 +171,7 @@ class Prescription:
     increment_lb: Decimal | None
     load_type: LoadType | None = None
     lower_body: bool = False
+    measure: Measure = "reps"
 
 
 @dataclass(frozen=True)

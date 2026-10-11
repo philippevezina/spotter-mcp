@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 from sqlalchemy import Connection, and_, delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -21,8 +22,8 @@ from spotter.db.schema import (
     prescribed_sets,
     scheduled_sessions,
 )
-from spotter.engine.sets import met_prescription, summarize
-from spotter.engine.types import LoadedSet, SetPerformance
+from spotter.engine.sets import hold_seconds, met_prescription, summarize
+from spotter.engine.types import LoadedSet, Measure, SetPerformance
 from spotter.units import kg_to_lb
 
 STORAGE_KG = Decimal("0.001")  # NUMERIC(7,3)
@@ -34,7 +35,13 @@ def _q(value: Decimal | None, step: Decimal) -> Decimal | None:
 
 
 def _loaded(weight_kg: Decimal | None, reps: int | None) -> LoadedSet:
+    """`reps` is whole seconds held for a timed exercise."""
     return LoadedSet(None if not weight_kg else kg_to_lb(weight_kg), reps or 0)
+
+
+def _performed(s: SetPerformance, measure: Measure) -> LoadedSet:
+    amount = hold_seconds(s.duration_s) if measure == "time" else s.reps
+    return _loaded(s.weight_kg, amount)
 
 
 def _prescription(
@@ -51,11 +58,13 @@ def _prescription(
                 prescribed_sets.c.exercise_id,
                 prescribed_sets.c.target_weight_kg,
                 prescribed_sets.c.target_reps,
+                prescribed_sets.c.target_hold_s,
             )
             .where(prescribed_sets.c.scheduled_session_id == session_id)
             .order_by(prescribed_sets.c.set_no)
         ):
-            targets[r.exercise_id].append(_loaded(r.target_weight_kg, r.target_reps))
+            amount = r.target_reps if r.target_reps is not None else r.target_hold_s
+            targets[r.exercise_id].append(_loaded(r.target_weight_kg, amount))
     return session_id, targets
 
 
@@ -66,7 +75,9 @@ def rebuild_activity_stats(conn: Connection, activity_id: int) -> int:
             performed_sets.c.exercise_id,
             performed_sets.c.weight_kg,
             performed_sets.c.reps,
+            performed_sets.c.duration_s,
             exercises.c.e1rm_eligible,
+            exercises.c.measure,
             activities.c.local_date,
         )
         .join(exercises, exercises.c.id == performed_sets.c.exercise_id)
@@ -76,16 +87,16 @@ def rebuild_activity_stats(conn: Connection, activity_id: int) -> int:
     ).all()
 
     grouped: dict[int, list[SetPerformance]] = defaultdict(list)
-    meta = {}
+    meta: dict[int, tuple[bool, Any, Measure]] = {}
     for r in rows:
-        grouped[r.exercise_id].append(SetPerformance(r.weight_kg, r.reps))
-        meta[r.exercise_id] = (r.e1rm_eligible, r.local_date)
+        grouped[r.exercise_id].append(SetPerformance(r.weight_kg, r.reps, r.duration_s))
+        meta[r.exercise_id] = (r.e1rm_eligible, r.local_date, r.measure)
 
     session_id, targets = _prescription(conn, activity_id)
     kept: list[int] = []
     for exercise_id, sets in grouped.items():
-        eligible, local_date = meta[exercise_id]
-        summary = summarize(sets, eligible)
+        eligible, local_date, measure = meta[exercise_id]
+        summary = summarize(sets, eligible, measure)
         if summary is None:
             continue
         values = {
@@ -96,12 +107,12 @@ def rebuild_activity_stats(conn: Connection, activity_id: int) -> int:
             "total_reps": summary.total_reps,
             "volume_kg": _q(summary.volume_kg, VOLUME_KG),
             "working_sets": summary.working_sets,
+            "top_set_hold_s": summary.top_set_hold_s,
+            "total_hold_s": summary.total_hold_s,
             "scheduled_session_id": session_id,
             "met_prescription": None
             if exercise_id not in targets
-            else met_prescription(
-                [_loaded(x.weight_kg, x.reps) for x in sets], targets[exercise_id]
-            ),
+            else met_prescription([_performed(x, measure) for x in sets], targets[exercise_id]),
         }
         stmt = insert(exercise_session_stats).values(
             activity_id=activity_id, exercise_id=exercise_id, **values

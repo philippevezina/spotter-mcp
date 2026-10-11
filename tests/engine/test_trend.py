@@ -73,3 +73,11 @@ def test_insufficient_data(points: list[TrendPoint]) -> None:
         "insufficient_data",
         len(points),
     )
+
+
+def test_bodyweight_hold_falls_back_to_top_set_hold() -> None:
+    points = [
+        TrendPoint(date(2026, 9, 1), None, None, None, D(30)),
+        TrendPoint(date(2026, 9, 8), None, None, None, D(45)),
+    ]
+    assert trend(points) == Trend("top_set_hold", D(30), D(45), D(15), D("0.5"), "up", 2)

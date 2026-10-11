@@ -111,3 +111,50 @@ def test_weight_without_increment_is_rejected() -> None:
 def test_empty_workout_is_rejected(exercises: tuple[WorkoutExercise, ...]) -> None:
     with pytest.raises(ValueError, match="at least one"):
         build_workout(Workout("x", "", exercises))
+
+
+# Timed exercises: the watch counts each hold down ------------------------------------
+
+TIMED_SNAPSHOT = Path(__file__).parent / "snapshots" / "workout_timed.json"
+SIDE_PLANK = WorkoutExercise(
+    "PLANK", "SIDE_PLANK", tuple(WorkoutSet(None, None, 30) for _ in range(3)), 60, None
+)
+WEIGHTED_PLANK = WorkoutExercise(
+    "PLANK",
+    "WEIGHTED_PLANK",
+    (WorkoutSet(None, Decimal(25), 40), WorkoutSet(None, Decimal(25), 35)),
+    90,
+    FIVE,
+)
+CORE = Workout(name="Core W1 2026-10-13", description="", exercises=(SIDE_PLANK, WEIGHTED_PLANK))
+
+
+def test_timed_snapshot() -> None:
+    payload = build_workout(CORE)
+    if os.environ.get("UPDATE_SNAPSHOTS"):
+        TIMED_SNAPSHOT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    assert payload == json.loads(TIMED_SNAPSHOT.read_text())
+
+
+def test_timed_sets_end_on_time() -> None:
+    steps = [s for s in _exercise_steps(build_workout(CORE)) if s.get("category") == "PLANK"]
+    assert [(s["endCondition"]["conditionTypeKey"], s["endConditionValue"]) for s in steps] == [
+        ("time", 30.0),
+        ("time", 40.0),
+        ("time", 35.0),
+    ]
+    assert steps[1]["weightValue"] == 11.34  # 25 lb
+
+
+def test_timed_duration_estimate_uses_hold_time() -> None:
+    # side plank 3 x (30 + 60), weighted plank (40 + 90) + (35 + 90)
+    assert build_workout(CORE)["estimatedDurationInSecs"] == 270 + 255
+
+
+@pytest.mark.parametrize(
+    "bad", [WorkoutSet(None, None), WorkoutSet(5, None, 30)], ids=["neither", "both"]
+)
+def test_set_needs_reps_or_hold(bad: WorkoutSet) -> None:
+    ex = WorkoutExercise("PLANK", "SIDE_PLANK", (bad,), 60, None)
+    with pytest.raises(ValueError, match="reps or hold_s"):
+        build_workout(Workout("x", "", (ex,)))

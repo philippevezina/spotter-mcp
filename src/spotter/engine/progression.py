@@ -3,6 +3,7 @@ A.7 effect, A.9, A.11, A.12). Loads in lb.
 
 Each exposure is judged at its working weight: the top working-set weight (A.1).
 Back-off sets below it are ignored. Bodyweight work reads every working set.
+Timed exercises count whole seconds held where reps exercises count reps.
 Stalls are re-derived from history on every call; nothing is stored.
 """
 
@@ -22,6 +23,7 @@ from spotter.engine.rules import (
     E1RM_MAX_REPS,
     E1RM_MIN_REPS,
     EPLEY_REP_DIVISOR,
+    HOLD_STEP_S,
     LINEAR_STEP_LOWER_LB,
     LINEAR_STEP_UPPER_LB,
     RED_MIN_SETS,
@@ -202,6 +204,10 @@ def _estimate(rx: Prescription, history: Sequence[Exposure]) -> ExerciseProposal
     )
 
 
+def _timed(rx: Prescription) -> bool:
+    return rx.measure == "time"
+
+
 def _rir_low(rx: Prescription, rir: int | None) -> bool:
     return rir is not None and rir < rx.target_rir - RIR_LOW_BELOW
 
@@ -222,19 +228,21 @@ def _double(
                 (f"rir:{rir}<{rx.target_rir - DOUBLE_RIR_TOLERANCE}",),
             )
         if weight is None or rx.increment_lb is None:
-            return (
-                weight,
-                (rx.rep_max,) * rx.sets,
-                "hold:bodyweight_at_rep_max",
-                ("bodyweight_at_rep_max",),
-            )
+            at_max = "bodyweight_at_hold_max" if _timed(rx) else "bodyweight_at_rep_max"
+            return weight, (rx.rep_max,) * rx.sets, f"hold:{at_max}", (at_max,)
         return (
             weight + rx.increment_lb,
             (rx.rep_min,) * rx.sets,
             f"double_progression:+{_fmt(rx.increment_lb)}lb",
             (),
         )
-    return weight, tuple(min(r + 1, rx.rep_max) for r in done), "double_progression:+1rep", ()
+    step, unit = (HOLD_STEP_S, "s") if _timed(rx) else (1, "rep")
+    return (
+        weight,
+        tuple(min(r + step, rx.rep_max) for r in done),
+        f"double_progression:+{step}{unit}",
+        (),
+    )
 
 
 def _linear(rx: Prescription, weight: Decimal, verdict: Judgement) -> Step:
@@ -300,6 +308,8 @@ def next_prescription(
     weight, reps = at_working_weight(last)
 
     if not in_plan and not all(rx.rep_min <= r <= rx.rep_max for r in reps):
+        if _timed(rx):  # Epley does not apply to holds
+            return _calibrate(rx, "new_hold_range")
         if weight is None:
             return _calibrate(rx, "bodyweight_new_rep_range")
         return _estimate(rx, usable)

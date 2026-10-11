@@ -4,28 +4,39 @@ A.1, A.2)."""
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from spotter.engine.e1rm import best_e1rm
 from spotter.engine.rules import WARMUP_FRACTION
-from spotter.engine.types import ExerciseSummary, LoadedSet, SetPerformance
+from spotter.engine.types import ExerciseSummary, LoadedSet, Measure, SetPerformance
+
+
+def hold_seconds(duration_s: Decimal | None) -> int:
+    """Whole seconds held, rounded half up. 0 when Garmin logged no duration."""
+    if duration_s is None:
+        return 0
+    return int(duration_s.quantize(Decimal(1), ROUND_HALF_UP))
 
 
 def _load(s: SetPerformance) -> Decimal:
     return s.weight_kg or Decimal(0)
 
 
-def _reps(s: SetPerformance) -> int:
+def amount(s: SetPerformance, measure: Measure = "reps") -> int:
+    """What a set counts: its reps, or whole seconds held for a timed exercise."""
+    if measure == "time":
+        return hold_seconds(s.duration_s)
     return s.reps or 0
 
 
-def working_sets(sets: Iterable[SetPerformance]) -> list[SetPerformance]:
-    """Sets with reps at or above 60 % of the session top set weight.
+def working_sets(sets: Iterable[SetPerformance], measure: Measure = "reps") -> list[SetPerformance]:
+    """Sets with reps (or seconds held) at or above 60 % of the session top set weight.
 
-    Sets with 0 or no reps are dropped first (the watch logs them as ACTIVE).
-    With no load on any set (bodyweight), every set with reps is a working set.
+    Sets with 0 or no reps are dropped first (the watch logs them as ACTIVE); for a timed
+    exercise, sets under half a second held. With no load on any set (bodyweight), every
+    remaining set is a working set.
     """
-    done = [s for s in sets if _reps(s) > 0]
+    done = [s for s in sets if amount(s, measure) > 0]
     top = max((_load(s) for s in done), default=Decimal(0))
     if top == 0:
         return done
@@ -33,21 +44,35 @@ def working_sets(sets: Iterable[SetPerformance]) -> list[SetPerformance]:
     return [s for s in done if _load(s) >= threshold]
 
 
-def summarize(sets: Iterable[SetPerformance], e1rm_eligible: bool) -> ExerciseSummary | None:
+def summarize(
+    sets: Iterable[SetPerformance], e1rm_eligible: bool, measure: Measure = "reps"
+) -> ExerciseSummary | None:
     """Summary over working sets. None when there is no working set (not an exposure).
 
-    Top set: heaviest, then most reps. e1RM only for eligible exercises.
+    Top set: heaviest, then most reps (or longest hold). e1RM only for eligible reps
+    exercises. A timed exercise has hold fields instead of reps, e1RM and volume.
     """
-    work = working_sets(sets)
+    work = working_sets(sets, measure)
     if not work:
         return None
-    top = max(work, key=lambda s: (_load(s), _reps(s)))
+    top = max(work, key=lambda s: (_load(s), amount(s, measure)))
+    if measure == "time":
+        return ExerciseSummary(
+            top_set_weight_kg=top.weight_kg,
+            top_set_reps=None,
+            best_e1rm_kg=None,
+            total_reps=None,
+            volume_kg=None,
+            working_sets=len(work),
+            top_set_hold_s=top.duration_s,
+            total_hold_s=sum((s.duration_s or Decimal(0) for s in work), Decimal(0)),
+        )
     return ExerciseSummary(
         top_set_weight_kg=top.weight_kg,
-        top_set_reps=_reps(top),
+        top_set_reps=amount(top),
         best_e1rm_kg=best_e1rm(work) if e1rm_eligible else None,
-        total_reps=sum(_reps(s) for s in work),
-        volume_kg=sum((_load(s) * _reps(s) for s in work), Decimal(0)),
+        total_reps=sum(amount(s) for s in work),
+        volume_kg=sum((_load(s) * amount(s) for s in work), Decimal(0)),
         working_sets=len(work),
     )
 
@@ -58,7 +83,7 @@ def _lb(s: LoadedSet) -> Decimal:
 
 def met_prescription(done: Sequence[LoadedSet], prescribed: Sequence[LoadedSet]) -> bool:
     """A.1 hit against stored targets: every prescribed set has its own performed set
-    with at least its reps at at least its weight (lb, display-rounded).
+    with at least its reps (or seconds held) at at least its weight (lb, display-rounded).
 
     Order-free, so a skipped warm-up or a set done out of order is not a miss. Solved
     as a bipartite matching (a handful of sets, so augmenting paths are plenty).
