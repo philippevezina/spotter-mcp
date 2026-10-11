@@ -19,6 +19,7 @@ All loads are in **lb**.
 ### A.1 Definitions
 
 - **Working set:** a set at 60 % or more of the session's top set weight for that exercise. Lighter sets are warm-ups and are ignored.
+- **Timed exercise:** an exercise curated with `measure = time` (planks, stretches). Each set counts whole seconds held (Garmin's `duration`, rounded half up) where other exercises count reps. Sets under half a second are not sets. Every rule below reads seconds for reps and the hold range for the rep range.
 - **Exposure:** one session in which an exercise was performed with at least one working set.
 - **Hit:** every prescribed working set reached its target reps.
 - **Miss:** at least one prescribed working set fell below `rep_min`.
@@ -27,7 +28,7 @@ All loads are in **lb**.
 ### A.2 Estimated 1RM
 
 - Epley: `e1rm = weight × (1 + reps / 30)`.
-- Only sets of 1 to 10 reps, only for exercises with `e1rm_eligible = true`.
+- Only sets of 1 to 10 reps, only for exercises with `e1rm_eligible = true`. Timed exercises are never eligible.
 - Session e1RM = best set of the session.
 
 ### A.3 Progression models
@@ -37,6 +38,8 @@ All loads are in **lb**.
 1. All working sets at `rep_max` and (RIR unknown or RIR ≥ `target_rir − 1`) → add `increment_lb`, reset reps to `rep_min`. (Corrected in Phase 4: the first draft said RIR ≤ `target_rir`, which blocked easy sessions. See decisions.md.)
 2. All working sets at or above `rep_min` → same weight, target +1 rep per set (capped at `rep_max`).
 3. Any set below `rep_min` → same weight, same targets. Count as a miss.
+
+**Timed holds** always use double_progression, whatever the plan or override model. Step 2 adds 5 s per set instead of 1 rep, capped at the hold max. At the max on every set, a loaded hold adds `increment_lb`; a bodyweight hold holds with `bodyweight_at_hold_max`, so Claude can suggest a harder variation. A new hold range with no in-plan history returns `needs_calibration` (Epley does not apply to holds).
 
 **linear** (default for main lifts, early in a block)
 
@@ -136,6 +139,8 @@ Protocol
 - Never call push_session without explicit confirmation from the athlete in this
   conversation. Use dry_run first when the session differs from the proposal.
 - If an exercise returns needs_calibration, ask for a recent working weight.
+- Timed exercises (planks, stretches) are curated with measure time. Plan them with
+  hold_min_s/hold_max_s and push them with hold_s; the watch counts each hold down.
 - After a completed session, ask how hard the main lifts felt (reps in reserve)
   and save it with add_session_note.
 
@@ -146,6 +151,7 @@ Judgement
 
 Style
 - Short answers. A session is a compact table: exercise, sets x reps, load, rest.
+  A hold reads as sets x seconds, e.g. 3 x 30 s.
 ```
 
 ---
