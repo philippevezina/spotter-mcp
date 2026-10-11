@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import Connection, Row, select
+from sqlalchemy import Connection, Row, and_, or_, select
 
 from spotter.db.schema import (
     activities,
@@ -26,16 +26,32 @@ from spotter.db.schema import (
 )
 from spotter.engine.plan_eval import plan_week
 from spotter.engine.rules import HISTORY_DAYS, LOWER_BODY_PATTERNS
-from spotter.engine.types import Exposure, LoadedSet, LoadType, Model, Prescription, Role
+from spotter.engine.sets import hold_seconds
+from spotter.engine.types import (
+    Exposure,
+    LoadedSet,
+    LoadType,
+    Measure,
+    Model,
+    Prescription,
+    Role,
+)
 from spotter.garmin.mappers import STRENGTH_TYPE
 from spotter.units import kg_to_lb
 
 MODELS: tuple[Model, ...] = ("double_progression", "linear", "rir_based")
+# A logged hold rounds to whole seconds; under half a second is not a set.
+MIN_HOLD_S = Decimal("0.5")
 
 
-def model_for(role: str, plan_model: str, override: Mapping[str, Any] | None) -> Model:
-    """`progression_override.model` wins; else the plan model for main lifts; else double
-    progression (decisions.md, "Model scope")."""
+def model_for(
+    role: str, plan_model: str, override: Mapping[str, Any] | None, measure: str = "reps"
+) -> Model:
+    """Timed exercises always use double progression. Otherwise `progression_override.model`
+    wins; else the plan model for main lifts; else double progression (decisions.md,
+    "Model scope" and "Timed exercises")."""
+    if measure == "time":
+        return "double_progression"
     if override and override.get("model") in MODELS:
         return cast(Model, override["model"])
     if role == "main":
@@ -44,18 +60,21 @@ def model_for(role: str, plan_model: str, override: Mapping[str, Any] | None) ->
 
 
 def prescription(pe: Row[Any], ex: Row[Any], plan_model: str) -> Prescription:
-    """One plan exercise row and its exercise row, as the rules read them."""
+    """One plan exercise row and its exercise row, as the rules read them. A timed
+    exercise's hold range becomes the rep range, in seconds."""
+    timed = ex.measure == "time"
     return Prescription(
         sets=pe.sets,
-        rep_min=pe.rep_min,
-        rep_max=pe.rep_max,
+        rep_min=pe.hold_min_s if timed else pe.rep_min,
+        rep_max=pe.hold_max_s if timed else pe.rep_max,
         target_rir=pe.target_rir,
         rest_s=pe.rest_s,
         role=cast(Role, pe.role),
-        model=model_for(pe.role, plan_model, pe.progression_override),
+        model=model_for(pe.role, plan_model, pe.progression_override, ex.measure),
         increment_lb=None if ex.increment_lb is None else Decimal(ex.increment_lb),
         load_type=cast(LoadType | None, ex.load_type),
         lower_body=ex.movement_pattern in LOWER_BODY_PATTERNS,
+        measure=cast(Measure, ex.measure),
     )
 
 
@@ -69,6 +88,7 @@ def plan_exercise_rows(conn: Connection, plan_id: int, plan_day_id: int | None =
             exercises.c.increment_lb,
             exercises.c.load_type,
             exercises.c.movement_pattern,
+            exercises.c.measure,
         )
         .join(plan_days, plan_days.c.id == plan_exercises.c.plan_day_id)
         .join(exercises, exercises.c.id == plan_exercises.c.exercise_id)
@@ -136,7 +156,8 @@ def rir_by_date(conn: Connection, exercise_id: int) -> dict[date, int]:
 def stored_targets(
     conn: Connection, exercise_id: int, activity_ids: list[int]
 ) -> dict[int, tuple[int, ...]]:
-    """Activity id -> target reps of the sets prescribed at the top weight, in set order,
+    """Activity id -> target reps (or hold seconds) of the sets prescribed at the top
+    weight, in set order,
     for activities linked to a pushed session that prescribed this exercise. Progression
     judges sets at the working weight, so back-off targets are left out."""
     rows = conn.execute(
@@ -144,6 +165,7 @@ def stored_targets(
             scheduled_sessions.c.activity_id,
             prescribed_sets.c.target_weight_kg,
             prescribed_sets.c.target_reps,
+            prescribed_sets.c.target_hold_s,
         )
         .join(
             prescribed_sets,
@@ -157,9 +179,8 @@ def stored_targets(
     )
     by_activity: dict[int, list[tuple[Decimal, int]]] = {}
     for r in rows:
-        by_activity.setdefault(r.activity_id, []).append(
-            (r.target_weight_kg or Decimal(0), r.target_reps)
-        )
+        amount = r.target_reps if r.target_reps is not None else r.target_hold_s
+        by_activity.setdefault(r.activity_id, []).append((r.target_weight_kg or Decimal(0), amount))
     out: dict[int, tuple[int, ...]] = {}
     for activity_id, sets in by_activity.items():
         top = max(w for w, _ in sets)
@@ -177,6 +198,7 @@ def exposures(
     """Strength sessions of one exercise in the 12 weeks before `before`, oldest first.
 
     Sets in set order, in lb. 0-rep sets are dropped (the watch logs them as ACTIVE).
+    A timed exercise counts whole seconds held, and drops sets under half a second.
     A session linked to a pushed prescription carries its stored targets.
     Exposures in a deload week of `plan` are flagged so progression skips them.
     """
@@ -185,22 +207,29 @@ def exposures(
             performed_sets.c.activity_id,
             performed_sets.c.weight_kg,
             performed_sets.c.reps,
+            performed_sets.c.duration_s,
+            exercises.c.measure,
             activities.c.local_date,
         )
         .join(activities, activities.c.garmin_activity_id == performed_sets.c.activity_id)
+        .join(exercises, exercises.c.id == performed_sets.c.exercise_id)
         .where(
             performed_sets.c.exercise_id == exercise_id,
             activities.c.type == STRENGTH_TYPE,
             activities.c.local_date >= before - timedelta(days=HISTORY_DAYS),
             activities.c.local_date < before,
-            performed_sets.c.reps > 0,
+            or_(
+                and_(exercises.c.measure == "reps", performed_sets.c.reps > 0),
+                and_(exercises.c.measure == "time", performed_sets.c.duration_s >= MIN_HOLD_S),
+            ),
         )
         .order_by(activities.c.start_time, performed_sets.c.activity_id, performed_sets.c.set_index)
     )
     sessions: dict[int, tuple[date, list[LoadedSet]]] = {}
     for r in rows:
         weight = None if not r.weight_kg else kg_to_lb(r.weight_kg)
-        sessions.setdefault(r.activity_id, (r.local_date, []))[1].append(LoadedSet(weight, r.reps))
+        amount = hold_seconds(r.duration_s) if r.measure == "time" else r.reps
+        sessions.setdefault(r.activity_id, (r.local_date, []))[1].append(LoadedSet(weight, amount))
     rir = rir_by_date(conn, exercise_id) if sessions else {}
     targets = stored_targets(conn, exercise_id, list(sessions)) if sessions else {}
     weeks = deload or set()

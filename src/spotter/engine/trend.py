@@ -1,7 +1,8 @@
 """Exercise history trend for `get_exercise_history`. Display only; no rule acts on it.
 
 Metric: e1RM when every point has one, else top-set weight, else top-set reps
-(bodyweight work). Compares the first and last points of the window.
+(bodyweight work), else top-set hold (bodyweight timed work). Compares the first and
+last points of the window.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ _METRICS: tuple[tuple[TrendMetric, Callable[[TrendPoint], Decimal | int | None]]
     ("e1rm", lambda p: p.best_e1rm_kg),
     ("top_set_weight", lambda p: p.top_set_weight_kg),
     ("top_set_reps", lambda p: p.top_set_reps),
+    ("top_set_hold", lambda p: p.top_set_hold_s),
 )
 
 

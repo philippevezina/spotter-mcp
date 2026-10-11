@@ -531,3 +531,20 @@ Status: decided.
 - **Known gap.** A past pushed session skipped at close no longer links if its activity syncs later, because `link_sessions` links only open sessions. Its sets still count in history, but without the stored targets. Sync before closing a plan if a session may be unsynced.
 - **Planned vs actual.** `recent_strength[].planned` is null for an unlinked activity. For a linked one, the reference is the pushed prescription. For a session linked by date and never pushed, it is the plan day's exercises, with `prescribed: null`. `not_done` lists planned exercises with no sets. `off_plan` lists exercises done but not planned. `get_plan` schedule rows show `pushed` and `prescribed`.
 Status: decided.
+
+## 2026-10-11: Timed exercises
+
+Why: a side plank logged on the watch had no stats, history or progression. Garmin logs a hold with `repetitionCount` null and the seconds in `duration`, and `working_sets` drops sets with no reps.
+
+Checked on the athlete's session of 2026-10-11 (activity synced to Neon): 2 side planks (`PLANK/SIDE_PLANK`) and 8 stretch sets (`WARM_UP/STRETCH_*`), all with reps null, weight null and durations of 30.0 s and 15.0 s. The athlete entered those durations in Garmin Connect after the session, so `duration` is the time held. The anonymized sets are in `tests/fixtures/garmin/exercise_sets_timed.json`.
+
+Decisions, with the athlete:
+- **Measure on the exercise.** `exercises.measure` is `reps` or `time` (migration 0004), set by `curate_exercise` and kept when omitted. A timed exercise is never e1RM eligible. Measure cannot change while a draft or active plan uses the exercise, because its ranges are stored as reps or as seconds. Changing it rebuilds that exercise's stats. The stretches are to be curated as timed too.
+- **Hold ranges.** `plan_exercises` has `hold_min_s`/`hold_max_s` next to `rep_min`/`rep_max`, and exactly one pair is set (check constraint). `create_plan` takes the pair that matches the exercise's measure, 5 to 300 s. `prescribed_sets.target_hold_s` likewise replaces `target_reps`.
+- **Engine.** One integer per set: reps, or whole seconds held for a timed exercise (rounded half up; under half a second is not a set). `judge`, stalls, deload, readiness and `met_prescription` are unchanged.
+- **Progression.** Timed holds always use double progression: +5 s per set (`HOLD_STEP_S`), capped at the hold max. At the max, a loaded hold adds its increment and a bodyweight hold holds with `bodyweight_at_hold_max`. A new hold range with no in-plan history is `needs_calibration` (`new_hold_range`). A progression override model on a timed exercise is ignored and warned about (`timed_double_progression`).
+- **Stats.** `exercise_session_stats.top_set_hold_s` and `total_hold_s` hold raw seconds. Reps fields, e1RM and volume are null. The trend falls back to `top_set_hold` for bodyweight holds.
+- **Workouts.** A timed step ends on time (`endCondition` time, seconds). The duration estimate uses the hold time instead of 45 s.
+- **Tool shapes.** Timed exercises show `hold_s`, `target_hold_s`, `hold_min_s`/`hold_max_s` and `total_hold_s` where reps exercises show the reps keys. `push_session` sets take `reps` or `hold_s`.
+- Outside the SPEC phases: one branch and one PR.
+Status: decided. SPEC sections 7, 8.4 and 11.3 and coaching-rules A.1 to A.3 and Part B updated.

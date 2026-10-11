@@ -76,7 +76,9 @@ exercises = Table(
     Column("load_type", Text),
     Column("increment_lb", Numeric(5, 2)),
     Column("e1rm_eligible", Boolean, nullable=False, server_default=text("false")),
+    Column("measure", Text, nullable=False, server_default=text("'reps'")),  # reps|time
     UniqueConstraint("garmin_category", "garmin_name"),
+    CheckConstraint("measure IN ('reps', 'time')", name="measure"),
 )
 
 # Written by map_exercise. Sync maps a set by exact catalog match first, then by alias.
@@ -158,12 +160,20 @@ plan_exercises = Table(
     Column("superset_group", Text),
     Column("role", Text, nullable=False, server_default=text("'accessory'")),
     Column("sets", Integer, nullable=False),
-    Column("rep_min", Integer, nullable=False),
-    Column("rep_max", Integer, nullable=False),
+    Column("rep_min", Integer),  # reps exercises
+    Column("rep_max", Integer),
+    Column("hold_min_s", Integer),  # timed exercises
+    Column("hold_max_s", Integer),
     Column("target_rir", Integer, nullable=False),
     Column("rest_s", Integer, nullable=False),
     Column("progression_override", JSONB),
     UniqueConstraint("plan_day_id", "position"),
+    CheckConstraint(
+        "(rep_min IS NOT NULL AND rep_max IS NOT NULL AND hold_min_s IS NULL"
+        " AND hold_max_s IS NULL) OR (rep_min IS NULL AND rep_max IS NULL"
+        " AND hold_min_s IS NOT NULL AND hold_max_s IS NOT NULL)",
+        name="reps_or_hold",
+    ),
 )
 
 # Actuals (from Garmin) ---------------------------------------------------
@@ -224,12 +234,14 @@ prescribed_sets = Table(
     ),
     Column("exercise_id", BigInteger, ForeignKey("exercises.id"), nullable=False),
     Column("set_no", Integer, nullable=False),
-    Column("target_reps", Integer, nullable=False),
+    Column("target_reps", Integer),  # reps exercises
+    Column("target_hold_s", Integer),  # timed exercises
     Column("target_weight_kg", Numeric(7, 3)),  # null for bodyweight
     Column("target_rir", Integer),
     Column("rest_s", Integer),
     Column("rule_fired", Text),
     UniqueConstraint("scheduled_session_id", "exercise_id", "set_no"),
+    CheckConstraint("(target_reps IS NULL) <> (target_hold_s IS NULL)", name="reps_or_hold"),
 )
 
 performed_sets = Table(
@@ -294,6 +306,8 @@ exercise_session_stats = Table(
     Column("total_reps", Integer),
     Column("volume_kg", Numeric(10, 2)),
     Column("working_sets", Integer),
+    Column("top_set_hold_s", Numeric(7, 1)),  # timed exercises
+    Column("total_hold_s", Numeric(8, 1)),
     Column("scheduled_session_id", BigInteger, ForeignKey("scheduled_sessions.id")),
     Column("met_prescription", Boolean),
     PrimaryKeyConstraint("activity_id", "exercise_id"),

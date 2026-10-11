@@ -126,7 +126,9 @@ def _strength_log(args: argparse.Namespace) -> None:
             ).all()
             for p in sets:
                 name = p.display_name or f"{p.garmin_category}/{p.garmin_name} (unmapped)"
-                print(f"  set {p.set_index:>2}  {name}: {p.reps} x {_lb(p.weight_kg)}")
+                timed = p.reps is None and p.duration_s is not None
+                amount = f"{p.duration_s} s" if timed else p.reps
+                print(f"  set {p.set_index:>2}  {name}: {amount} x {_lb(p.weight_kg)}")
             rows = conn.execute(
                 select(exercise_session_stats, exercises.c.display_name)
                 .join(exercises, exercises.c.id == exercise_session_stats.c.exercise_id)
@@ -134,6 +136,13 @@ def _strength_log(args: argparse.Namespace) -> None:
                 .order_by(exercises.c.display_name)
             ).all()
             for r in rows:
+                if r.top_set_hold_s is not None:
+                    print(
+                        f"  stats  {r.display_name}: top {_lb(r.top_set_weight_kg)}"
+                        f" x {r.top_set_hold_s} s, working sets {r.working_sets}"
+                        f", held {r.total_hold_s} s"
+                    )
+                    continue
                 e1rm = "-" if r.best_e1rm_kg is None else _lb(r.best_e1rm_kg)
                 print(
                     f"  stats  {r.display_name}: top {_lb(r.top_set_weight_kg)} x {r.top_set_reps}"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -40,7 +40,7 @@ from spotter.engine.rules import (
     HISTORY_DAYS,
     MUSCLES,
 )
-from spotter.engine.types import LoadType, Model, Role, VolumeDay, VolumeExercise
+from spotter.engine.types import LoadType, Measure, Model, Role, VolumeDay, VolumeExercise
 from spotter.mcp.deps import Deps
 from spotter.mcp.serialize import iso, lb, num
 from spotter.mcp.tools.context import OPEN_SESSION, plan_detail
@@ -185,7 +185,24 @@ def _exercise_out(r: Row[Any]) -> dict[str, Any]:
         "load_type": r.load_type,
         "increment_lb": num(r.increment_lb, 2),
         "e1rm_eligible": r.e1rm_eligible,
+        "measure": r.measure,
     }
+
+
+def _in_open_plan(conn: Connection, exercise_id: int) -> bool:
+    return (
+        conn.execute(
+            select(plan_exercises.c.id)
+            .join(plan_days, plan_days.c.id == plan_exercises.c.plan_day_id)
+            .join(plans, plans.c.id == plan_days.c.plan_id)
+            .where(
+                plan_exercises.c.exercise_id == exercise_id,
+                plans.c.status.in_(("draft", "active")),
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
 
 
 def curate(
@@ -197,13 +214,26 @@ def curate(
     secondary_muscles: list[str] | None = None,
     increment_lb: Decimal | None = None,
     e1rm_eligible: bool | None = None,
+    measure: Measure | None = None,
 ) -> dict[str, Any]:
-    """Set the curated fields. Rebuilds the exercise's stats when e1RM eligibility changes."""
+    """Set the curated fields. `measure` None keeps the current one. A timed exercise is
+    never e1RM eligible. Rebuilds the exercise's stats when e1RM eligibility or measure
+    changes. Measure cannot change while a draft or active plan uses the exercise: its
+    ranges are stored as reps or as seconds."""
     ex = _require_exercise(conn, exercise_id)
+    if measure is None:
+        measure = cast(Measure, ex.measure)
+    if measure != ex.measure and _in_open_plan(conn, exercise_id):
+        raise ToolError(
+            f"{ex.display_name} is in a draft or active plan with {ex.measure} ranges. "
+            "Close or replace that plan before changing its measure."
+        )
     secondary = [m for m in dict.fromkeys(secondary_muscles or []) if m not in primary_muscles]
     if increment_lb is None:
         increment_lb = DEFAULT_INCREMENT_LB[load_type]
-    if e1rm_eligible is None:
+    if measure == "time":
+        e1rm_eligible = False
+    elif e1rm_eligible is None:
         e1rm_eligible = load_type in E1RM_LOAD_TYPES and movement_pattern not in NON_COMPOUND
     conn.execute(
         update(exercises)
@@ -216,9 +246,11 @@ def curate(
             load_type=load_type,
             increment_lb=increment_lb,
             e1rm_eligible=e1rm_eligible,
+            measure=measure,
         )
     )
-    rebuilt = rebuild_all(conn, exercise_id) if e1rm_eligible != ex.e1rm_eligible else 0
+    changed = e1rm_eligible != ex.e1rm_eligible or measure != ex.measure
+    rebuilt = rebuild_all(conn, exercise_id) if changed else 0
     row = conn.execute(select(exercises).where(exercises.c.id == exercise_id)).one()
     return {**_exercise_out(row), "activities_rebuilt": rebuilt}
 
@@ -230,8 +262,14 @@ class PlanExerciseIn(BaseModel):
     exercise_id: int
     role: Role = "accessory"
     sets: Annotated[int, Field(ge=1, le=10)]
-    rep_min: Annotated[int, Field(ge=1, le=30)]
-    rep_max: Annotated[int, Field(ge=1, le=30)]
+    rep_min: Annotated[int, Field(ge=1, le=30)] | None = Field(
+        default=None, description="Reps exercises only."
+    )
+    rep_max: Annotated[int, Field(ge=1, le=30)] | None = None
+    hold_min_s: Annotated[int, Field(ge=5, le=300)] | None = Field(
+        default=None, description="Timed exercises only (measure time), in seconds."
+    )
+    hold_max_s: Annotated[int, Field(ge=5, le=300)] | None = None
     target_rir: Annotated[int, Field(ge=0, le=5)]
     rest_s: Annotated[int, Field(ge=0, le=600)]
     superset_group: str | None = None
@@ -280,6 +318,24 @@ def _end_criteria(spec: PlanIn) -> dict[str, Any]:
     }
 
 
+def _range_errors(label: str, e: PlanExerciseIn, ex: Row[Any]) -> list[str]:
+    """A reps exercise takes rep_min/rep_max; a timed one hold_min_s/hold_max_s."""
+    timed = ex.measure == "time"
+    pair, other = (
+        ((e.hold_min_s, e.hold_max_s), (e.rep_min, e.rep_max))
+        if timed
+        else ((e.rep_min, e.rep_max), (e.hold_min_s, e.hold_max_s))
+    )
+    names = ("hold_min_s", "hold_max_s") if timed else ("rep_min", "rep_max")
+    where = f"{label}: {ex.display_name} ({'timed' if timed else 'reps'})"
+    lo, hi = pair
+    if lo is None or hi is None or any(v is not None for v in other):
+        return [f"{where} takes {names[0]} and {names[1]} only."]
+    if lo > hi:
+        return [f"{where} has {names[0]} {lo} > {names[1]} {hi}."]
+    return []
+
+
 def _validate_plan(conn: Connection, spec: PlanIn) -> dict[int, Row[Any]]:
     """Hard errors. Returns the plan's exercise rows by id."""
     errors: list[str] = []
@@ -295,11 +351,6 @@ def _validate_plan(conn: Connection, spec: PlanIn) -> dict[int, Row[Any]]:
         errors.append(f"No goal with id {spec.goal_id}.")
     for d in spec.days:
         for e in d.exercises:
-            if e.rep_min > e.rep_max:
-                errors.append(
-                    f"{d.label}: exercise {e.exercise_id} has rep_min {e.rep_min} > "
-                    f"rep_max {e.rep_max}."
-                )
             override = e.progression_override or {}
             if "model" in override and override["model"] not in MODELS:
                 errors.append(
@@ -317,6 +368,10 @@ def _validate_plan(conn: Connection, spec: PlanIn) -> dict[int, Row[Any]]:
     if uncurated:
         names = ", ".join(f"{i} ({rows[i].display_name})" for i in uncurated)
         errors.append(f"Not curated yet: {names}. Call curate_exercise for each first.")
+    for d in spec.days:
+        for e in d.exercises:
+            if e.exercise_id in rows:
+                errors += _range_errors(d.label, e, rows[e.exercise_id])
     if errors:
         raise ToolError(" ".join(errors))
     return rows
@@ -358,6 +413,11 @@ def _plan_warnings(
         warnings.append(f"block_weeks:{spec.weeks} outside {BLOCK_WEEKS_MIN}-{BLOCK_WEEKS_MAX}")
     for d in spec.days:
         for e in d.exercises:
+            ex = rows[e.exercise_id]
+            if ex.measure == "time":
+                if (e.progression_override or {}).get("model") not in (None, "double_progression"):
+                    warnings.append(f"timed_double_progression:{ex.display_name}")
+                continue
             model = model_for(e.role, spec.progression_model, e.progression_override)
             if model == "linear" and e.rep_min != e.rep_max:
                 warnings.append(
@@ -427,6 +487,8 @@ def create(conn: Connection, spec: PlanIn, today: date) -> dict[str, Any]:
                     "sets": e.sets,
                     "rep_min": e.rep_min,
                     "rep_max": e.rep_max,
+                    "hold_min_s": e.hold_min_s,
+                    "hold_max_s": e.hold_max_s,
                     "target_rir": e.target_rir,
                     "rest_s": e.rest_s,
                     "progression_override": e.progression_override,
@@ -713,11 +775,14 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         secondary_muscles: list[Muscle] | None = None,
         increment_lb: Annotated[float, Field(gt=0, le=50)] | None = None,
         e1rm_eligible: bool | None = None,
+        measure: Measure | None = None,
     ) -> dict[str, Any]:
         """Fill an exercise's coaching fields. Required before the exercise can go in a plan.
         increment_lb is the smallest real jump (default 5; none for bodyweight; dumbbells are
-        per hand). e1rm_eligible defaults to true for barbell and dumbbell compounds. Changing
-        it rebuilds that exercise's history stats."""
+        per hand). e1rm_eligible defaults to true for barbell and dumbbell compounds. measure
+        is reps, or time for holds such as planks and stretches (kept when omitted; new
+        exercises default to reps). Changing e1rm_eligible or measure rebuilds that
+        exercise's history stats."""
         with deps.engine.begin() as conn:
             return curate(
                 conn,
@@ -728,6 +793,7 @@ def register(mcp: FastMCP, deps: Deps) -> None:
                 list(secondary_muscles or []),
                 None if increment_lb is None else Decimal(str(increment_lb)),
                 e1rm_eligible,
+                measure,
             )
 
     @mcp.tool(annotations=WRITE)
@@ -736,8 +802,10 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         preferred_weekday. Every exercise must be curated first. Pick 4 to 8 weeks and explain
         the length and model in rationale. plans.progression_model applies to main lifts;
         secondary and accessory work uses double progression unless progression_override says
-        otherwise. Returns warnings (volume, block length, rep ranges); review them with the
-        athlete. Call only after the athlete agrees to the plan."""
+        otherwise. Timed exercises take hold_min_s/hold_max_s (seconds) instead of
+        rep_min/rep_max and always use double progression (+5 s per set). Returns warnings
+        (volume, block length, rep ranges); review them with the athlete. Call only after the
+        athlete agrees to the plan."""
         with deps.engine.begin() as conn:
             return create(conn, plan, deps.today(conn))
 

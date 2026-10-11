@@ -123,8 +123,37 @@ def _window_counts(days: list[ReadinessDay]) -> dict[str, int]:
     return {"days": w.days, "green": w.green, "amber": w.amber, "red": w.red, "no_data": w.no_data}
 
 
-def _top_set(weight_kg: Any, reps: int | None) -> dict[str, Any]:
-    return {"weight_lb": lb(weight_kg), "reps": reps}
+def _top_set(r: Row[Any]) -> dict[str, Any]:
+    """Top set of an `exercise_session_stats` row: reps, or seconds held when timed."""
+    if r.top_set_hold_s is not None:
+        return {"weight_lb": lb(r.top_set_weight_kg), "hold_s": num(r.top_set_hold_s)}
+    return {"weight_lb": lb(r.top_set_weight_kg), "reps": r.top_set_reps}
+
+
+def _trend_point(r: Row[Any]) -> TrendPoint:
+    return TrendPoint(
+        r.local_date, r.best_e1rm_kg, r.top_set_weight_kg, r.top_set_reps, r.top_set_hold_s
+    )
+
+
+def _range(e: Row[Any]) -> dict[str, Any]:
+    """A plan exercise's range: reps, or seconds held for a timed exercise."""
+    if e.hold_min_s is not None:
+        return {"hold_min_s": e.hold_min_s, "hold_max_s": e.hold_max_s}
+    return {"rep_min": e.rep_min, "rep_max": e.rep_max}
+
+
+def _amount(r: Row[Any]) -> dict[str, Any]:
+    """A prescribed set's target: reps, or seconds held for a timed exercise."""
+    if r.target_hold_s is not None:
+        return {"hold_s": r.target_hold_s}
+    return {"reps": r.target_reps}
+
+
+def _totals(r: Row[Any]) -> dict[str, Any]:
+    if r.total_hold_s is not None:
+        return {"total_hold_s": num(r.total_hold_s)}
+    return {"total_reps": r.total_reps}
 
 
 def _trend_out(points: list[TrendPoint]) -> dict[str, Any]:
@@ -229,8 +258,7 @@ def plan_detail(conn: Connection, today: date, plan_id: int | None) -> dict[str,
                 "superset_group": e.superset_group,
                 "role": e.role,
                 "sets": e.sets,
-                "rep_min": e.rep_min,
-                "rep_max": e.rep_max,
+                **_range(e),
                 "target_rir": e.target_rir,
                 "rest_s": e.rest_s,
             }
@@ -314,9 +342,9 @@ def _session_exercises(
             {
                 "exercise_id": r.exercise_id,
                 "name": r.display_name,
-                "top_set": _top_set(r.top_set_weight_kg, r.top_set_reps),
+                "top_set": _top_set(r),
                 "working_sets": r.working_sets,
-                "total_reps": r.total_reps,
+                **_totals(r),
                 "volume_lb": lb(r.volume_kg),
                 "e1rm_lb": lb(r.best_e1rm_kg),
             }
@@ -351,7 +379,7 @@ def _planned(conn: Connection, activity_ids: list[int]) -> dict[int, dict[str, A
     ):
         names[r.exercise_id] = r.display_name
         targets[r.scheduled_session_id].setdefault(r.exercise_id, []).append(
-            {"reps": r.target_reps, "weight_lb": lb(r.target_weight_kg)}
+            {**_amount(r), "weight_lb": lb(r.target_weight_kg)}
         )
     day_exercises: dict[int, list[int]] = defaultdict(list)
     for r in conn.execute(
@@ -465,17 +493,12 @@ def strength_window(
                 "exposures": len(rs),
                 "first_date": iso(rs[0].local_date),
                 "last_date": iso(last.local_date),
-                "last_top_set": _top_set(last.top_set_weight_kg, last.top_set_reps),
+                "last_top_set": _top_set(last),
                 "working_sets": sum(r.working_sets or 0 for r in rs),
-                "volume_lb": lb(sum((r.volume_kg or Decimal(0) for r in rs), Decimal(0))),
-                "trend": _trend_out(
-                    [
-                        TrendPoint(
-                            r.local_date, r.best_e1rm_kg, r.top_set_weight_kg, r.top_set_reps
-                        )
-                        for r in rs
-                    ]
-                ),
+                "volume_lb": None
+                if all(r.volume_kg is None for r in rs)
+                else lb(sum((r.volume_kg or Decimal(0) for r in rs), Decimal(0))),
+                "trend": _trend_out([_trend_point(r) for r in rs]),
             }
         )
     per_exercise.sort(key=lambda e: (-e["exposures"], e["name"]))
@@ -504,26 +527,26 @@ def exercise_history(
         query.order_by(exercise_session_stats.c.local_date.desc()).limit(limit)
     ).all()
     return {
-        "exercise": {"id": ex.id, "name": ex.display_name, "e1rm_eligible": ex.e1rm_eligible},
+        "exercise": {
+            "id": ex.id,
+            "name": ex.display_name,
+            "e1rm_eligible": ex.e1rm_eligible,
+            "measure": ex.measure,
+        },
         "sessions": [
             {
                 "date": iso(r.local_date),
                 "activity_id": r.activity_id,
-                "top_set": _top_set(r.top_set_weight_kg, r.top_set_reps),
+                "top_set": _top_set(r),
                 "e1rm_lb": lb(r.best_e1rm_kg),
                 "volume_lb": lb(r.volume_kg),
                 "working_sets": r.working_sets,
-                "total_reps": r.total_reps,
+                **_totals(r),
                 "met_prescription": r.met_prescription,
             }
             for r in rows
         ],
-        "trend": _trend_out(
-            [
-                TrendPoint(r.local_date, r.best_e1rm_kg, r.top_set_weight_kg, r.top_set_reps)
-                for r in rows
-            ]
-        ),
+        "trend": _trend_out([_trend_point(r) for r in rows]),
     }
 
 
@@ -814,6 +837,7 @@ def search(
             "load_type": r.load_type,
             "increment_lb": num(r.increment_lb, 2),
             "e1rm_eligible": r.e1rm_eligible,
+            "measure": r.measure,
         }
         for r in rows
     ]

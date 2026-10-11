@@ -165,6 +165,7 @@ CREATE TABLE exercises (
   load_type         text,   -- barbell|dumbbell_each|machine|cable|bodyweight|bodyweight_plus
   increment_lb      numeric(5,2),
   e1rm_eligible     boolean NOT NULL DEFAULT false,
+  measure           text NOT NULL DEFAULT 'reps' CHECK (measure IN ('reps','time')),
   UNIQUE (garmin_category, garmin_name)
 );
 -- Seeded from garminconnect.exercises (1,527 rows). Curated fields are filled
@@ -229,8 +230,10 @@ CREATE TABLE plan_exercises (
   superset_group       text,
   role                 text NOT NULL DEFAULT 'accessory',  -- main|secondary|accessory
   sets                 int NOT NULL,
-  rep_min              int NOT NULL,
-  rep_max              int NOT NULL,
+  rep_min              int,           -- reps exercises
+  rep_max              int,
+  hold_min_s           int,           -- timed exercises (exactly one pair is set)
+  hold_max_s           int,
   target_rir           int NOT NULL,
   rest_s               int NOT NULL,
   progression_override jsonb,
@@ -254,7 +257,8 @@ CREATE TABLE prescribed_sets (
   scheduled_session_id bigint NOT NULL REFERENCES scheduled_sessions(id) ON DELETE CASCADE,
   exercise_id          bigint NOT NULL REFERENCES exercises(id),
   set_no               int NOT NULL,
-  target_reps          int NOT NULL,
+  target_reps          int,              -- reps exercises
+  target_hold_s        int,              -- timed exercises (exactly one is set)
   target_weight_kg     numeric(7,3),     -- null for bodyweight
   target_rir           int,
   rest_s               int,
@@ -331,6 +335,8 @@ CREATE TABLE exercise_session_stats (
   total_reps       int,
   volume_kg        numeric(10,2),
   working_sets     int,
+  top_set_hold_s   numeric(7,1),         -- timed exercises; reps fields null
+  total_hold_s     numeric(8,1),
   scheduled_session_id bigint REFERENCES scheduled_sessions(id),
   met_prescription boolean,
   PRIMARY KEY (activity_id, exercise_id)
@@ -407,6 +413,7 @@ The daily summary (`get_user_summary`) carries resting HR, Body Battery high and
 - `step_order` must be unique within the workout. Advance by 3 per repeat group.
 - Workout name: `"{plan_day.label} W{week_no} {scheduled_date}"`.
 - Put the progression note (e.g. "Squat +5 lb") in the workout description if the API accepts it.
+- A timed set (exercise `measure = time`) ends on time: `endCondition` time, `endConditionValue` in seconds. The watch counts it down.
 
 ### 8.5 Rate limiting
 
@@ -469,8 +476,8 @@ General rules:
 |---|---|---|
 | `upsert_athlete_profile` | profile fields | Updates `athlete`. |
 | `upsert_goal` | goal fields | Creates or updates a goal. |
-| `curate_exercise` | `exercise_id`, curated fields | Sets pattern, muscles, load type, increment. |
-| `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane) and saves as `draft`. Returns validation warnings. |
+| `curate_exercise` | `exercise_id`, curated fields | Sets pattern, muscles, load type, increment, measure (`reps` or `time`). |
+| `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane, hold ranges for timed exercises) and saves as `draft`. Returns validation warnings. |
 | `activate_plan` | `plan_id`, `start_date` | Ends any active plan as `abandoned` only if `replace=true`. Generates `scheduled_sessions`. |
 | `push_session` | `scheduled_session_id`, `exercises?`, `dry_run?` | Without `exercises`, pushes the current `propose_next_session` output. Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it once. Repeat pushes update the same workout, never duplicate. Off-plan exercises are allowed and logged as a `swap`. |
 | `unschedule_session` | `scheduled_session_id`, `reason`, `new_date?` | Removes the workout from the Garmin calendar and library and clears the prescription. Without `new_date`: `skipped`. With it: the session moves and is `planned` again. A pushed session dated today or earlier is synced first and never removed once trained. |

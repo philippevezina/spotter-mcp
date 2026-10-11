@@ -661,3 +661,106 @@ def test_interference_without_a_load_increase() -> None:
 def test_modifiers_pass_calibration_through() -> None:
     cal = run(OHP)
     assert apply_modifiers(OHP, cal, "red", True) is cal
+
+
+# Timed holds (A.3 timed double progression) -----------------------------------------
+# Rep counts are whole seconds held; ranges are seconds.
+
+PLANK = rx(
+    model="double_progression",
+    role="accessory",
+    rep_min=30,
+    rep_max=45,
+    increment_lb=None,
+    load_type="bodyweight",
+    measure="time",
+)
+LOADED_PLANK = replace(PLANK, increment_lb=D(5), load_type="bodyweight_plus")
+
+
+@pytest.mark.parametrize(
+    ("prescription", "history", "weight", "targets", "rule"),
+    [
+        pytest.param(
+            PLANK,
+            [ex(0, *three(None, 30, 30, 30))],
+            None,
+            (35, 35, 35),
+            "double_progression:+5s",
+            id="adds 5 s per set",
+        ),
+        pytest.param(
+            PLANK,
+            [ex(0, *three(None, 43, 40, 30))],
+            None,
+            (45, 45, 35),
+            "double_progression:+5s",
+            id="capped at the max",
+        ),
+        pytest.param(
+            PLANK,
+            [ex(0, *three(None, 45, 45, 45))],
+            None,
+            (45, 45, 45),
+            "hold:bodyweight_at_hold_max",
+            id="bodyweight at max holds",
+        ),
+        pytest.param(
+            LOADED_PLANK,
+            [ex(0, *three(10, 45, 45, 45))],
+            D(15),
+            (30, 30, 30),
+            "double_progression:+5lb",
+            id="loaded at max adds load",
+        ),
+        pytest.param(
+            PLANK,
+            [ex(0, *three(None, 30, 25, 30))],
+            None,
+            (30, 30, 30),
+            "hold:miss",
+            id="below min is a miss",
+        ),
+        pytest.param(
+            PLANK,
+            [ex(0, (None, 30), (None, 30))],
+            None,
+            (30, 30, 30),
+            "hold:sets_short",
+            id="short session holds",
+        ),
+    ],
+)
+def test_timed(
+    prescription: Prescription,
+    history: list[Exposure],
+    weight: Decimal | None,
+    targets: tuple[int, ...],
+    rule: str,
+) -> None:
+    p = run(prescription, *history)
+    assert (p.status, p.weight_lb, p.target_reps, p.rule_fired) == ("ok", weight, targets, rule)
+
+
+def test_timed_at_max_reason() -> None:
+    assert run(PLANK, ex(0, *three(None, 45, 45, 45))).reasons == ("bodyweight_at_hold_max",)
+
+
+def test_timed_stall_flags_after_three_misses() -> None:
+    p = run(PLANK, *(ex(d, *three(None, 30, 20, 20)) for d in (0, 7, 14)))
+    assert (p.rule_fired, p.flags) == ("hold:miss", ("stall",))
+
+
+@pytest.mark.parametrize("prescription", [PLANK, LOADED_PLANK])
+def test_timed_new_range_needs_calibration(prescription: Prescription) -> None:
+    w = None if prescription.increment_lb is None else 10
+    p = run(prescription, ex(-7, *three(w, 20, 20, 20)))
+    assert (p.status, p.reasons) == ("needs_calibration", ("new_hold_range",))
+
+
+def test_timed_deload_and_red() -> None:
+    base = run(PLANK, ex(0, *three(None, 40, 40, 40)))
+    assert deload(PLANK, base).target_reps == (40, 40)
+    red = apply_modifiers(PLANK, base, "red", False)
+    # accessory keeps its sets; red blocks the +5 s
+    assert (red.sets, red.target_reps, red.modifiers) == (3, (40, 40, 40), ("readiness:red",))

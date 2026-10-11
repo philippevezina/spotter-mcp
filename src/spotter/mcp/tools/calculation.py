@@ -20,7 +20,7 @@ from spotter.db.schema import (
     scheduled_sessions,
 )
 from spotter.engine import endurance, plan_eval, progression
-from spotter.engine.types import ExerciseProposal, Exposure, SessionFact
+from spotter.engine.types import ExerciseProposal, Exposure, Prescription, SessionFact
 from spotter.mcp.deps import Deps
 from spotter.mcp.serialize import iso, lb, num
 from spotter.mcp.tools import READ_ONLY
@@ -48,6 +48,8 @@ def _num_lb(value: Any) -> float | None:
 
 
 def _proposal_out(r: Row[Any], model: str, p: ExerciseProposal) -> dict[str, Any]:
+    """A timed exercise gets `target_hold_s` (seconds per set) instead of `target_reps`."""
+    key = "hold_s" if r.measure == "time" else "reps"
     return {
         "exercise_id": r.exercise_id,
         "name": r.display_name,
@@ -55,7 +57,7 @@ def _proposal_out(r: Row[Any], model: str, p: ExerciseProposal) -> dict[str, Any
         "model": model,
         "status": p.status,
         "sets": p.sets,
-        "target_reps": list(p.target_reps),
+        f"target_{key}": list(p.target_reps),
         "weight_lb": _num_lb(p.weight_lb),
         "target_rir": p.target_rir,
         "rest_s": p.rest_s,
@@ -65,7 +67,7 @@ def _proposal_out(r: Row[Any], model: str, p: ExerciseProposal) -> dict[str, Any
         "modifiers": list(p.modifiers),
         "last": None
         if not p.last_reps
-        else {"weight_lb": _num_lb(p.last_weight_lb), "reps": list(p.last_reps)},
+        else {"weight_lb": _num_lb(p.last_weight_lb), key: list(p.last_reps)},
     }
 
 
@@ -145,9 +147,10 @@ def propose(conn: Connection, scheduled_session_id: int, today: date) -> dict[st
     }
 
 
-def _top(e: Exposure) -> dict[str, Any]:
+def _top(e: Exposure, rx: Prescription) -> dict[str, Any]:
     weight, reps = progression.at_working_weight(e)
-    return {"date": iso(e.local_date), "weight_lb": _num_lb(weight), "reps": list(reps)}
+    key = "hold_s" if rx.measure == "time" else "reps"
+    return {"date": iso(e.local_date), "weight_lb": _num_lb(weight), key: list(reps)}
 
 
 def evaluate(conn: Connection, plan_id: int | None, today: date) -> dict[str, Any]:
@@ -191,8 +194,8 @@ def evaluate(conn: Connection, plan_id: int | None, today: date) -> dict[str, An
                 "name": name,
                 "role": rx.role,
                 "exposures": len(hist),
-                "first": _top(hist[0]) if hist else None,
-                "last": _top(hist[-1]) if hist else None,
+                "first": _top(hist[0], rx) if hist else None,
+                "last": _top(hist[-1], rx) if hist else None,
                 "stall_streak": progression.stall_streak(rx, hist),
                 "resets": sum(1 for e in events if e.flag == "stall"),
             }
@@ -266,7 +269,9 @@ def register(mcp: FastMCP, deps: Deps) -> None:
         from history and the progression rules, with rule_fired and reasons. Readiness
         modifiers apply only when the session is today; endurance interference and deload
         weeks apply on any date. needs_calibration means no usable history: ask the athlete
-        for a recent working weight. Use this before suggesting any weight. Saves nothing."""
+        for a recent working weight. Timed exercises (e.g. planks) return target_hold_s,
+        seconds per set, instead of target_reps. Use this before suggesting any weight.
+        Saves nothing."""
         with deps.engine.connect() as conn:
             return propose(conn, scheduled_session_id, deps.today(conn))
 

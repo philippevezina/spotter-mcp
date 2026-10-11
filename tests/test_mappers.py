@@ -230,3 +230,13 @@ def test_empty_payloads_map_to_nulls() -> None:
 def test_unknown_source_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown daily metrics source"):
         mappers.map_daily_metrics(TODAY, {"steps": {}})
+
+
+def test_timed_exercise_sets() -> None:
+    """Recorded from a side plank and a stretch (durations entered in Garmin Connect)."""
+    rows = mappers.map_exercise_sets(load("exercise_sets_timed.json"))
+    assert [(r["garmin_name"], r["reps"], r["weight_kg"], r["duration_s"]) for r in rows] == [
+        ("SIDE_PLANK", None, None, Decimal("30.0")),
+        ("SIDE_PLANK", None, None, Decimal("30.0")),
+        ("STRETCH_QUAD", None, None, Decimal("15.0")),
+    ]

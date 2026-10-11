@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from spotter.engine.e1rm import epley
-from spotter.engine.sets import met_prescription, summarize, working_sets
+from spotter.engine.sets import hold_seconds, met_prescription, summarize, working_sets
 from spotter.engine.types import ExerciseSummary, LoadedSet, SetPerformance
 
 D = Decimal
@@ -123,3 +123,49 @@ def test_met_prescription(
     done: list[LoadedSet], prescribed: list[LoadedSet], expected: bool
 ) -> None:
     assert met_prescription(done, prescribed) is expected
+
+
+# Timed exercises -------------------------------------------------------------------
+
+
+def T(weight: int | None, held: str | None) -> SetPerformance:
+    """A timed set as Garmin logs it: no reps, the hold in `duration_s`."""
+    return SetPerformance(
+        None if weight is None else D(weight), None, None if held is None else D(held)
+    )
+
+
+@pytest.mark.parametrize(
+    ("duration", "seconds"),
+    [(None, 0), ("0.4", 0), ("0.5", 1), ("29.5", 30), ("30.0", 30)],
+)
+def test_hold_seconds_rounds_half_up(duration: str | None, seconds: int) -> None:
+    assert hold_seconds(None if duration is None else D(duration)) == seconds
+
+
+def test_working_sets_timed() -> None:
+    sets = [T(None, "30.0"), T(None, "0.4"), T(None, None)]
+    assert working_sets(sets, "time") == [T(None, "30.0")]
+    assert working_sets(sets) == []  # read as reps, a timed set has none
+
+
+def test_working_sets_timed_loaded_drops_warmups() -> None:
+    assert working_sets([T(5, "45"), T(25, "30")], "time") == [T(25, "30")]
+
+
+def test_summarize_timed() -> None:
+    summary = summarize([T(None, "30.0"), T(None, "35.2")], e1rm_eligible=True, measure="time")
+    assert summary == ExerciseSummary(
+        top_set_weight_kg=None,
+        top_set_reps=None,
+        best_e1rm_kg=None,
+        total_reps=None,
+        volume_kg=None,
+        working_sets=2,
+        top_set_hold_s=D("35.2"),
+        total_hold_s=D("65.2"),
+    )
+
+
+def test_summarize_timed_none_without_holds() -> None:
+    assert summarize([T(None, None)], e1rm_eligible=False, measure="time") is None
