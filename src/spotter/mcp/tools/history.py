@@ -79,7 +79,8 @@ def prescription(pe: Row[Any], ex: Row[Any], plan_model: str) -> Prescription:
 
 
 def plan_exercise_rows(conn: Connection, plan_id: int, plan_day_id: int | None = None) -> list[Any]:
-    """Plan exercises with their exercise fields, in day order then position."""
+    """Plan exercises with their exercise fields, in day order then position. Without
+    `plan_day_id`, days removed by update_plan are left out."""
     query = (
         select(
             plan_exercises,
@@ -97,6 +98,8 @@ def plan_exercise_rows(conn: Connection, plan_id: int, plan_day_id: int | None =
     )
     if plan_day_id is not None:
         query = query.where(plan_exercises.c.plan_day_id == plan_day_id)
+    else:
+        query = query.where(plan_days.c.removed_on.is_(None))
     return list(conn.execute(query))
 
 

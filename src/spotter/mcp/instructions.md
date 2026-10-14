@@ -18,6 +18,8 @@ Interim instructions (Phase 5). The full coaching protocol ships later.
   They hold hold_max_s on every set, never progress and do not count toward volume.
 - Before create_plan, curate every exercise with curate_exercise. Call create_plan and
   activate_plan only after the athlete agrees to the plan and its start date.
+- To change a plan, call update_plan with dry_run first and show the changes; never
+  recreate it. Apply only after the athlete agrees.
 - After a completed session, ask how hard the main lifts felt (reps in reserve) and save
   it with add_session_note.
 - Use only numbers the tools returned. If data is missing, say so instead of guessing.

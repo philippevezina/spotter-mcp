@@ -1,5 +1,5 @@
-"""Removing pushed sessions from Garmin. Shared by unschedule_session, close_plan and
-activate_plan(replace=true).
+"""Removing pushed sessions from Garmin. Shared by unschedule_session, close_plan,
+activate_plan(replace=true) and update_plan.
 
 Garmin first, database second: a removal that fails leaves the ids in place, and a
 retry is safe because removing a missing item is not an error (decisions.md).

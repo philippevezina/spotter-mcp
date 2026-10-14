@@ -142,6 +142,8 @@ plan_days = Table(
     Column("label", Text, nullable=False),
     Column("day_order", Integer, nullable=False),
     Column("preferred_weekday", Text),
+    # Set when update_plan removes a day that has history; the row stays for that history.
+    Column("removed_on", Date),
     UniqueConstraint("plan_id", "day_order"),
 )
 
