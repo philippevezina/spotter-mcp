@@ -228,13 +228,13 @@ CREATE TABLE plan_exercises (
   exercise_id          bigint NOT NULL REFERENCES exercises(id),
   position             int NOT NULL,
   superset_group       text,
-  role                 text NOT NULL DEFAULT 'accessory',  -- main|secondary|accessory
+  role                 text NOT NULL DEFAULT 'accessory',  -- main|secondary|accessory|cooldown
   sets                 int NOT NULL,
   rep_min              int,           -- reps exercises
   rep_max              int,
   hold_min_s           int,           -- timed exercises (exactly one pair is set)
   hold_max_s           int,
-  target_rir           int NOT NULL,
+  target_rir           int,           -- null for cooldown only
   rest_s               int NOT NULL,
   progression_override jsonb,
   UNIQUE (plan_day_id, position)
@@ -414,6 +414,7 @@ The daily summary (`get_user_summary`) carries resting HR, Body Battery high and
 - Workout name: `"{plan_day.label} W{week_no} {scheduled_date}"`.
 - Put the progression note (e.g. "Squat +5 lb") in the workout description if the API accepts it.
 - A timed set (exercise `measure = time`) ends on time: `endCondition` time, `endConditionValue` in seconds. The watch counts it down.
+- A cool-down exercise's sets are `cooldown` steps (`stepTypeId` 2), one per set, never a repeat group, at the end of the workout.
 
 ### 8.5 Rate limiting
 
@@ -477,9 +478,9 @@ General rules:
 | `upsert_athlete_profile` | profile fields | Updates `athlete`. |
 | `upsert_goal` | goal fields | Creates or updates a goal. |
 | `curate_exercise` | `exercise_id`, curated fields | Sets pattern, muscles, load type, increment, measure (`reps` or `time`). |
-| `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane, hold ranges for timed exercises) and saves as `draft`. Returns validation warnings. |
+| `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane, hold ranges for timed exercises, cool-down stretches timed, unweighted, without target RIR and last in their day) and saves as `draft`. Returns validation warnings. |
 | `activate_plan` | `plan_id`, `start_date` | Ends any active plan as `abandoned` only if `replace=true`. Generates `scheduled_sessions`. |
-| `push_session` | `scheduled_session_id`, `exercises?`, `dry_run?` | Without `exercises`, pushes the current `propose_next_session` output. Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it once. Repeat pushes update the same workout, never duplicate. Off-plan exercises are allowed and logged as a `swap`. |
+| `push_session` | `scheduled_session_id`, `exercises?`, `dry_run?` | Without `exercises`, pushes the current `propose_next_session` output. Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it once. Repeat pushes update the same workout, never duplicate. Off-plan exercises are allowed and logged as a `swap`. The plan day's cool-down must stay last. |
 | `unschedule_session` | `scheduled_session_id`, `reason`, `new_date?` | Removes the workout from the Garmin calendar and library and clears the prescription. Without `new_date`: `skipped`. With it: the session moves and is `planned` again. A pushed session dated today or earlier is synced first and never removed once trained. |
 | `record_adjustment` | `plan_id`, `kind`, `reason`, `payload` | Appends to `adjustments`. |
 | `add_session_note` | `text`, `tags?`, `rir_feedback?`, `scheduled_session_id?` | Appends to `session_notes`. |
