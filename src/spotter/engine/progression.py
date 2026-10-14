@@ -17,6 +17,7 @@ from decimal import Decimal
 from spotter.engine.e1rm import epley
 from spotter.engine.rules import (
     BARBELL_MIN_LB,
+    COOLDOWN_RULE,
     DELOAD_FRACTION,
     DELOAD_RIR_ADD,
     DOUBLE_RIR_TOLERANCE,
@@ -103,8 +104,10 @@ def judge(rx: Prescription, e: Exposure) -> tuple[Judgement, tuple[str, ...]]:
 
 def _streaks(rx: Prescription, history: Sequence[Exposure]) -> list[tuple[Exposure, int]]:
     """Miss streak after each counted exposure, oldest first. Deload and short exposures are
-    skipped; a hit, a hold or a weight change ends the streak."""
+    skipped; a hit, a hold or a weight change ends the streak. A cool-down never stalls."""
     out: list[tuple[Exposure, int]] = []
+    if rx.role == "cooldown":
+        return out
     streak, weight = 0, None
     for e in history:
         if e.deload:
@@ -299,7 +302,18 @@ def next_prescription(
 
     The caller passes exposures from the last 12 weeks (A.12), deload ones flagged.
     Exposures before `plan_start` set the baseline but never count toward stalls.
+    A cool-down ignores history: its fixed hold on every set, no weight, no target RIR.
     """
+    if rx.role == "cooldown":
+        return ExerciseProposal(
+            status="ok",
+            sets=rx.sets,
+            target_reps=(rx.rep_max,) * rx.sets,
+            weight_lb=None,
+            target_rir=None,
+            rest_s=rx.rest_s,
+            rule_fired=COOLDOWN_RULE,
+        )
     usable = [e for e in history if not e.deload and at_working_weight(e)[1]]
     if not usable:
         return _calibrate(rx, "no_history_12w")
@@ -369,8 +383,9 @@ def next_prescription(
 
 
 def deload(rx: Prescription, p: ExerciseProposal) -> ExerciseProposal:
-    """A.9: half the sets (rounded up), last weight -10 %, target RIR +2, no progression."""
-    if p.status != "ok":
+    """A.9: half the sets (rounded up), last weight -10 %, target RIR +2, no progression.
+    A cool-down is unchanged."""
+    if p.status != "ok" or rx.role == "cooldown":
         return p
     sets = -(-rx.sets // 2)
     weight = p.last_weight_lb
@@ -410,9 +425,9 @@ def apply_modifiers(
 
     amber and red keep the last weight and reps instead of progressing; red also adds 1 to
     target RIR and removes a set from main and secondary lifts. Interference stops load
-    increases on lower-body main lifts. Resets and holds pass through.
+    increases on lower-body main lifts. Resets, holds and cool-downs pass through.
     """
-    if p.status != "ok":
+    if p.status != "ok" or rx.role == "cooldown":
         return p
     out = p
     if readiness in ("amber", "red") and _progresses(rx, out):
@@ -425,7 +440,7 @@ def apply_modifiers(
             out,
             sets=sets,
             target_reps=out.target_reps[:sets],
-            target_rir=out.target_rir + RED_RIR_ADD,
+            target_rir=rx.target_rir + RED_RIR_ADD,
             modifiers=tuple(dict.fromkeys((*out.modifiers, "readiness:red"))),
         )
     if (

@@ -20,6 +20,7 @@ All loads are in **lb**.
 
 - **Working set:** a set at 60 % or more of the session's top set weight for that exercise. Lighter sets are warm-ups and are ignored.
 - **Timed exercise:** an exercise curated with `measure = time` (planks, stretches). Each set counts whole seconds held (Garmin's `duration`, rounded half up) where other exercises count reps. Sets under half a second are not sets. Every rule below reads seconds for reps and the hold range for the rep range.
+- **Cool-down exercise:** a plan exercise with role `cooldown`, a stretch at the end of the day. It must be timed, take no weight, carry no target RIR and come after every other exercise of its day. Its sets are logged (stats and history) but never judged: no progression, stalls, deload, readiness or interference modifiers, `met_prescription` or `evaluate_plan` lift entry.
 - **Exposure:** one session in which an exercise was performed with at least one working set.
 - **Hit:** every prescribed working set reached its target reps.
 - **Miss:** at least one prescribed working set fell below `rep_min`.
@@ -40,6 +41,8 @@ All loads are in **lb**.
 3. Any set below `rep_min` → same weight, same targets. Count as a miss.
 
 **Timed holds** always use double_progression, whatever the plan or override model. Step 2 adds 5 s per set instead of 1 rep, capped at the hold max. At the max on every set, a loaded hold adds `increment_lb`; a bodyweight hold holds with `bodyweight_at_hold_max`, so Claude can suggest a harder variation. A new hold range with no in-plan history returns `needs_calibration` (Epley does not apply to holds).
+
+**Cool-down** stretches ignore the model and history: every set holds the hold max, no weight, no target RIR (`cooldown:fixed`).
 
 **linear** (default for main lifts, early in a block)
 
@@ -91,6 +94,7 @@ Effect: lower-body main lifts get no load increase. Upper-body work is unaffecte
 - New plan with no comparable recent history: start at 10 to 12 sets per muscle per week.
 - Working sets per session: warn above 25.
 - Count a set toward a muscle as 1 if primary, 0.5 if secondary.
+- Cool-down exercises count toward neither.
 
 ### A.9 Deload
 
@@ -141,6 +145,8 @@ Protocol
 - If an exercise returns needs_calibration, ask for a recent working weight.
 - Timed exercises (planks, stretches) are curated with measure time. Plan them with
   hold_min_s/hold_max_s and push them with hold_s; the watch counts each hold down.
+- To end a day with stretches, add them last with role cooldown (timed, no target_rir).
+  They hold hold_max_s on every set, never progress and do not count toward volume.
 - After a completed session, ask how hard the main lifts felt (reps in reserve)
   and save it with add_session_note.
 
@@ -151,7 +157,7 @@ Judgement
 
 Style
 - Short answers. A session is a compact table: exercise, sets x reps, load, rest.
-  A hold reads as sets x seconds, e.g. 3 x 30 s.
+  A hold reads as sets x seconds, e.g. 3 x 30 s. List stretches under "Cool-down".
 ```
 
 ---

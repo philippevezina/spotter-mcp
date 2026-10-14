@@ -2,7 +2,8 @@
 
 Rebuilds upsert on (activity_id, exercise_id). When the activity is linked to a
 scheduled session, each row gets that `scheduled_session_id`, and `met_prescription`
-for exercises the session prescribed (null otherwise). Callers own the transaction.
+for exercises the session prescribed (null otherwise, and null for the plan day's
+cool-down stretches, which are logged, not judged). Callers own the transaction.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from spotter.db.schema import (
     exercise_session_stats,
     exercises,
     performed_sets,
+    plan_exercises,
     prescribed_sets,
     scheduled_sessions,
 )
@@ -47,12 +49,20 @@ def _performed(s: SetPerformance, measure: Measure) -> LoadedSet:
 def _prescription(
     conn: Connection, activity_id: int
 ) -> tuple[int | None, dict[int, list[LoadedSet]]]:
-    """The linked session id and its prescribed sets per exercise, if any."""
-    session_id = conn.execute(
-        select(scheduled_sessions.c.id).where(scheduled_sessions.c.activity_id == activity_id)
-    ).scalar()
+    """The linked session id and its prescribed sets per exercise, if any. Cool-down
+    exercises of the session's plan day are left out."""
+    session = conn.execute(
+        select(scheduled_sessions.c.id, scheduled_sessions.c.plan_day_id).where(
+            scheduled_sessions.c.activity_id == activity_id
+        )
+    ).first()
+    session_id = None if session is None else session.id
     targets: dict[int, list[LoadedSet]] = defaultdict(list)
-    if session_id is not None:
+    if session is not None:
+        cooldown = select(plan_exercises.c.exercise_id).where(
+            plan_exercises.c.plan_day_id == session.plan_day_id,
+            plan_exercises.c.role == "cooldown",
+        )
         for r in conn.execute(
             select(
                 prescribed_sets.c.exercise_id,
@@ -60,7 +70,10 @@ def _prescription(
                 prescribed_sets.c.target_reps,
                 prescribed_sets.c.target_hold_s,
             )
-            .where(prescribed_sets.c.scheduled_session_id == session_id)
+            .where(
+                prescribed_sets.c.scheduled_session_id == session_id,
+                prescribed_sets.c.exercise_id.not_in(cooldown),
+            )
             .order_by(prescribed_sets.c.set_no)
         ):
             amount = r.target_reps if r.target_reps is not None else r.target_hold_s

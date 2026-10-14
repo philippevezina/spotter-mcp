@@ -548,3 +548,18 @@ Decisions, with the athlete:
 - **Tool shapes.** Timed exercises show `hold_s`, `target_hold_s`, `hold_min_s`/`hold_max_s` and `total_hold_s` where reps exercises show the reps keys. `push_session` sets take `reps` or `hold_s`.
 - Outside the SPEC phases: one branch and one PR.
 Status: decided. SPEC sections 7, 8.4 and 11.3 and coaching-rules A.1 to A.3 and Part B updated.
+
+## 2026-10-13: Cool-down stretches
+
+Why: stretches curated as timed were treated as training. They counted toward weekly hard sets, progressed +5 s per set, could stall, took readiness modifiers, needed a target RIR and pushed as interval steps anywhere in the workout. The athlete stretches at the end of a session (8 `WARM_UP/STRETCH_*` sets on 2026-10-11).
+
+Decisions, with the athlete:
+- **Plan role `cooldown`.** Not a separate block and not push-time only. A cool-down exercise is timed, takes no weight (`NEEDS_WEIGHT` load types are rejected), has no target RIR, and comes after every other exercise of its day. Migration 0005 makes `plan_exercises.target_rir` nullable, checks the role list, and ties `cooldown` to a null target RIR and a hold range. `create_plan` and `push_session` reject a cool-down listed before other work.
+- **Fixed hold.** Every set holds `hold_max_s`, no weight, `rule_fired` `cooldown:fixed`. No calibration, deload, readiness or interference modifiers, no stall events. The engine reads `target_rir` 0 for a cool-down and never uses it; the proposal shows null.
+- **Log only.** Stats rows and history stay. Cool-downs are out of the A.8 volume checks, out of `evaluate_plan` lifts and stalls, and their `met_prescription` is null (the stats rebuild skips the plan day's cool-down exercises).
+- **Garmin `cooldown` steps.** `stepTypeId` 2, ended on time, one step per set with rest between, never a repeat group (Phase 0 only checked interval steps inside a repeat).
+- **Off-plan stretches** pushed on a session are ordinary timed exercises, not cool-downs. Add stretches to the plan to get cool-down treatment.
+- **Movement pattern.** There is no mobility pattern; curate stretches as `isolation`.
+- Outside the SPEC phases: one branch and one PR.
+Status: decided. Garmin acceptance of a `cooldown` step with an exercise category is not yet checked against the real API. If it is rejected, fall back to interval steps and record it here.
+SPEC sections 7, 8.4 and 11.3, coaching-rules A.1, A.3, A.8 and Part B updated.

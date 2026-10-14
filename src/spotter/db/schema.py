@@ -164,7 +164,7 @@ plan_exercises = Table(
     Column("rep_max", Integer),
     Column("hold_min_s", Integer),  # timed exercises
     Column("hold_max_s", Integer),
-    Column("target_rir", Integer, nullable=False),
+    Column("target_rir", Integer),  # null for cooldown
     Column("rest_s", Integer, nullable=False),
     Column("progression_override", JSONB),
     UniqueConstraint("plan_day_id", "position"),
@@ -173,6 +173,12 @@ plan_exercises = Table(
         " AND hold_max_s IS NULL) OR (rep_min IS NULL AND rep_max IS NULL"
         " AND hold_min_s IS NOT NULL AND hold_max_s IS NOT NULL)",
         name="reps_or_hold",
+    ),
+    CheckConstraint("role IN ('main', 'secondary', 'accessory', 'cooldown')", name="role"),
+    CheckConstraint(
+        "(role = 'cooldown') = (target_rir IS NULL)"
+        " AND (role <> 'cooldown' OR hold_min_s IS NOT NULL)",
+        name="cooldown",
     ),
 )
 

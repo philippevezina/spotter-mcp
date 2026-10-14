@@ -50,6 +50,10 @@ from spotter.sync.stats import rebuild_all
 from spotter.sync.sync import link_sessions
 from spotter.units import lb_to_kg
 
+# Load types that cannot be pushed without a weight. Bodyweight has none, and a
+# bodyweight_plus set with no weight means no added load.
+NEEDS_WEIGHT = frozenset({"barbell", "dumbbell_each", "machine", "cable"})
+
 WRITE = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}
 IDEMPOTENT = {**WRITE, "idempotentHint": True}
 
@@ -260,7 +264,11 @@ def curate(
 
 class PlanExerciseIn(BaseModel):
     exercise_id: int
-    role: Role = "accessory"
+    role: Role = Field(
+        default="accessory",
+        description="cooldown: a stretch at the end of the day (timed, fixed hold, no RIR, "
+        "not counted in volume).",
+    )
     sets: Annotated[int, Field(ge=1, le=10)]
     rep_min: Annotated[int, Field(ge=1, le=30)] | None = Field(
         default=None, description="Reps exercises only."
@@ -270,7 +278,9 @@ class PlanExerciseIn(BaseModel):
         default=None, description="Timed exercises only (measure time), in seconds."
     )
     hold_max_s: Annotated[int, Field(ge=5, le=300)] | None = None
-    target_rir: Annotated[int, Field(ge=0, le=5)]
+    target_rir: Annotated[int, Field(ge=0, le=5)] | None = Field(
+        default=None, description="Required, except for cooldown, which takes none."
+    )
     rest_s: Annotated[int, Field(ge=0, le=600)]
     superset_group: str | None = None
     progression_override: dict[str, Any] | None = Field(
@@ -336,6 +346,30 @@ def _range_errors(label: str, e: PlanExerciseIn, ex: Row[Any]) -> list[str]:
     return []
 
 
+def _cooldown_errors(d: PlanDayIn, rows: dict[int, Row[Any]]) -> list[str]:
+    """Every non-cooldown exercise has a target RIR. Cool-down stretches are timed, carry no
+    weight or target RIR, and come after every other exercise of the day."""
+    errors: list[str] = []
+    seen_cooldown = False
+    for e in d.exercises:
+        ex = rows.get(e.exercise_id)
+        name = ex.display_name if ex is not None else str(e.exercise_id)
+        if e.role != "cooldown":
+            if e.target_rir is None:
+                errors.append(f"{d.label}: {name} needs target_rir.")
+            if seen_cooldown:
+                errors.append(f"{d.label}: {name} comes after the cool-down; move it before.")
+            continue
+        seen_cooldown = True
+        if e.target_rir is not None:
+            errors.append(f"{d.label}: {name} is a cool-down; drop target_rir.")
+        if ex is not None and ex.measure != "time":
+            errors.append(f"{d.label}: {name} is a cool-down but not timed; curate it as time.")
+        if ex is not None and ex.load_type in NEEDS_WEIGHT:
+            errors.append(f"{d.label}: {name} is a cool-down but needs a weight ({ex.load_type}).")
+    return errors
+
+
 def _validate_plan(conn: Connection, spec: PlanIn) -> dict[int, Row[Any]]:
     """Hard errors. Returns the plan's exercise rows by id."""
     errors: list[str] = []
@@ -372,6 +406,7 @@ def _validate_plan(conn: Connection, spec: PlanIn) -> dict[int, Row[Any]]:
         for e in d.exercises:
             if e.exercise_id in rows:
                 errors += _range_errors(d.label, e, rows[e.exercise_id])
+        errors += _cooldown_errors(d, rows)
     if errors:
         raise ToolError(" ".join(errors))
     return rows
@@ -388,6 +423,7 @@ def _volume_days(spec: PlanIn, rows: dict[int, Row[Any]]) -> list[VolumeDay]:
                     secondary=tuple(rows[e.exercise_id].secondary_muscles or ()),
                 )
                 for e in d.exercises
+                if e.role != "cooldown"
             ),
         )
         for d in spec.days

@@ -40,12 +40,9 @@ from spotter.mcp.tools import garmin_sync
 from spotter.mcp.tools.calculation import propose
 from spotter.mcp.tools.context import OPEN_SESSION
 from spotter.mcp.tools.garmin_calendar import clear_push, remove_pushed
-from spotter.mcp.tools.write import WRITE, adjust
+from spotter.mcp.tools.write import NEEDS_WEIGHT, WRITE, adjust
 from spotter.units import lb_to_kg, round_lb
 
-# Load types that cannot be pushed without a weight. Bodyweight has none, and a
-# bodyweight_plus set with no weight means no added load.
-NEEDS_WEIGHT = frozenset({"barbell", "dumbbell_each", "machine", "cable"})
 MANUAL_RULE = "manual"
 OFF_PLAN_RULE = "off_plan"
 
@@ -89,6 +86,7 @@ class _Planned:
     target_rir: int | None
     rule_fired: str
     last_weight_lb: Decimal | None = None
+    cooldown: bool = False
 
 
 def _dec(value: float | None) -> Decimal | None:
@@ -177,6 +175,7 @@ def _from_proposal(proposal: list[dict[str, Any]], rows: dict[int, Row[Any]]) ->
             target_rir=p["target_rir"],
             rule_fired=p["rule_fired"],
             last_weight_lb=_dec((p["last"] or {}).get("weight_lb")),
+            cooldown=p["role"] == "cooldown",
         )
         for p in proposal
     ]
@@ -255,11 +254,26 @@ def _from_input(
                 else (p["target_rir"] if p else None),
                 rule_fired=rule,
                 last_weight_lb=None if p is None else _dec((p["last"] or {}).get("weight_lb")),
+                cooldown=p is not None and p["role"] == "cooldown",
             )
         )
+    late = _after_cooldown(planned)
+    if late:
+        errors.append(f"List the cool-down last; {', '.join(late)} comes after it.")
     if errors:
         raise ToolError(" ".join(errors))
     return planned, rounded
+
+
+def _after_cooldown(planned: list[_Planned]) -> list[str]:
+    """Names of non-cooldown exercises listed after the first cool-down stretch."""
+    late: list[str] = []
+    seen = False
+    for p in planned:
+        seen = seen or p.cooldown
+        if seen and not p.cooldown:
+            late.append(p.name)
+    return late
 
 
 def _description(planned: list[_Planned]) -> str:
@@ -287,6 +301,7 @@ def _workout(s: Row[Any], planned: list[_Planned]) -> dict[str, Any]:
                     sets=p.sets,
                     rest_s=p.rest_s,
                     increment_lb=None if p.ex.increment_lb is None else Decimal(p.ex.increment_lb),
+                    cooldown=p.cooldown,
                 )
                 for p in planned
             ),
