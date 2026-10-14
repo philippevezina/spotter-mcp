@@ -580,3 +580,13 @@ Decisions, with the athlete:
 - **Log.** Active plans log one `plan_update` adjustment whose payload is the change summary. Drafts are not logged.
 - Outside the SPEC phases: one branch and one PR.
 Status: decided. SPEC sections 7 and 11.3, coaching-rules Part B and the interim instructions updated.
+
+## 2026-10-13: Migrations on deploy
+
+Why: migrations were applied to Neon by hand, and one was missed. Production was at 0004 while the deployed code expected 0005, so a plan with a cool-down stretch could not be saved.
+
+Decisions:
+- **`spotter migrate`** runs `alembic upgrade head` in one transaction under a Postgres advisory lock (`spotter.db.migrate.LOCK_KEY`), on `DATABASE_URL_UNPOOLED`. Two overlapping builds never migrate at once; a failed migration leaves the schema unchanged. It prints the revision before and after, and is safe to run anywhere (Docker, by hand).
+- **Production build step.** `vercel.json` `buildCommand` runs `uv run --no-dev spotter migrate` when `VERCEL_ENV` is `production`, and skips otherwise. Previews have no database variables. A build command makes Vercel expect static output, and an empty folder is rejected: `outputDirectory` is `public/`, which holds only a `robots.txt` that blocks crawlers. Static files win over the rewrite, so nothing else is served from there. This is configuration, so `api/index.py` stays the only Vercel-specific code.
+- **The schema moves before the code.** The build migrates before the new deployment goes live, and a deploy that fails after its build keeps the new schema under the old code. Migrations must therefore be additive (expand first, drop columns or constraints in a later deploy). A failed migration fails the build and nothing ships.
+Status: decided. To verify on the first production deploy: the build log shows the `migrate` line.

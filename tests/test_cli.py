@@ -13,6 +13,7 @@ from spotter.db.schema import exercises
 from spotter.db.seed import seed_exercises
 from spotter.garmin import tokens
 from spotter.garmin.client import CatalogEntry
+from tests.conftest import run_alembic
 from tests.test_garmin_client import REFRESHED, TOKEN, FakeGarmin
 
 
@@ -232,3 +233,15 @@ def test_sync_respects_min_interval(
     assert "skipped: recent" in capsys.readouterr().out.splitlines()
     main(["sync", "--force"])
     assert "skipped: " in capsys.readouterr().out.splitlines()
+
+
+def test_migrate_applies_pending_revisions(
+    env: pytest.MonkeyPatch, db: Engine, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(["migrate"])
+    head = capsys.readouterr().out.strip()
+    assert head.startswith("already at ")
+
+    run_alembic(db, "downgrade", "-1")
+    main(["migrate"])
+    assert capsys.readouterr().out.strip().endswith(f"-> {head.removeprefix('already at ')}")
