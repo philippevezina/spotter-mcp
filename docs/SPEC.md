@@ -219,6 +219,7 @@ CREATE TABLE plan_days (
   label           text NOT NULL,     -- "Lower A"
   day_order       int NOT NULL,
   preferred_weekday text,
+  removed_on      date,              -- set by update_plan when a removed day keeps history
   UNIQUE (plan_id, day_order)
 );
 
@@ -347,7 +348,7 @@ CREATE TABLE adjustments (
   id         bigserial PRIMARY KEY,
   plan_id    bigint REFERENCES plans(id),
   created_at timestamptz NOT NULL DEFAULT now(),
-  kind       text NOT NULL,   -- load_change|swap|deload|reschedule|volume_change|end_plan|other
+  kind       text NOT NULL,   -- load_change|swap|deload|reschedule|volume_change|end_plan|plan_update|other
   reason     text NOT NULL,
   payload    jsonb
 );
@@ -479,6 +480,7 @@ General rules:
 | `upsert_goal` | goal fields | Creates or updates a goal. |
 | `curate_exercise` | `exercise_id`, curated fields | Sets pattern, muscles, load type, increment, measure (`reps` or `time`). |
 | `create_plan` | full plan spec | Validates (exercises curated, weekly hard sets per muscle within rules, rep ranges sane, hold ranges for timed exercises, cool-down stretches timed, unweighted, without target RIR and last in their day) and saves as `draft`. Returns validation warnings. |
+| `update_plan` | `plan_id`, full plan spec with `plan_day_id` on kept days, `reason`, `dry_run?` | Edits a draft or active plan in place, with `create_plan`'s validation and warnings. On an active plan only open sessions dated after today change: they move with a new weekday, appear for new days and weeks, and go with removed days and weeks. Pushed ones whose day changed are removed from Garmin first. A removed day with history is kept with `removed_on`. Logs a `plan_update` adjustment. The same spec twice is a no-op. |
 | `activate_plan` | `plan_id`, `start_date` | Ends any active plan as `abandoned` only if `replace=true`. Generates `scheduled_sessions`. |
 | `push_session` | `scheduled_session_id`, `exercises?`, `dry_run?` | Without `exercises`, pushes the current `propose_next_session` output. Saves `prescribed_sets`, builds the Garmin workout, uploads or updates it, schedules it once. Repeat pushes update the same workout, never duplicate. Off-plan exercises are allowed and logged as a `swap`. The plan day's cool-down must stay last. |
 | `unschedule_session` | `scheduled_session_id`, `reason`, `new_date?` | Removes the workout from the Garmin calendar and library and clears the prescription. Without `new_date`: `skipped`. With it: the session moves and is `planned` again. A pushed session dated today or earlier is synced first and never removed once trained. |
