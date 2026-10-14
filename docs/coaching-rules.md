@@ -149,6 +149,8 @@ Protocol
   They hold hold_max_s on every set, never progress and do not count toward volume.
 - After a completed session, ask how hard the main lifts felt (reps in reserve)
   and save it with add_session_note.
+- To change a plan, call update_plan with dry_run first and show the changes; never
+  recreate it. Apply only after the athlete agrees.
 
 Judgement
 - Readiness and endurance flags are inputs, not orders. Explain your choice in one line.

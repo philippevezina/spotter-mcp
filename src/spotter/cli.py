@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 
 from spotter.config import get_settings
+from spotter.db.migrate import upgrade_head
 from spotter.db.schema import activities, exercise_session_stats, exercises, performed_sets
 from spotter.db.seed import seed_exercises
 from spotter.db.session import get_engine
@@ -50,6 +51,11 @@ def _garmin_check(_: argparse.Namespace) -> None:
         session.client.check()
     print("ok")
     print(f"refreshed: {str(session.refreshed).lower()}")
+
+
+def _migrate(_: argparse.Namespace) -> None:
+    before, after = upgrade_head(get_engine(get_settings().migration_url))
+    print(f"already at {after}" if before == after else f"migrated: {before} -> {after}")
 
 
 def _seed_exercises(_: argparse.Namespace) -> None:
@@ -171,6 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
         "garmin-check", help="Verify the stored tokens with one read call. Saves a refresh."
     )
     p.set_defaults(func=_garmin_check)
+
+    p = sub.add_parser("migrate", help="Apply database migrations up to head. Idempotent.")
+    p.set_defaults(func=_migrate)
 
     p = sub.add_parser("seed-exercises", help="Load the Garmin exercise catalog. Idempotent.")
     p.set_defaults(func=_seed_exercises)

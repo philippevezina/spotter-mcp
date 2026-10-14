@@ -239,7 +239,9 @@ def plan_detail(conn: Connection, today: date, plan_id: int | None) -> dict[str,
         if plan is None:
             raise ToolError(f"No plan with id {plan_id}.")
     days = conn.execute(
-        select(plan_days).where(plan_days.c.plan_id == plan.id).order_by(plan_days.c.day_order)
+        select(plan_days)
+        .where(plan_days.c.plan_id == plan.id, plan_days.c.removed_on.is_(None))
+        .order_by(plan_days.c.day_order)
     ).all()
     day_ids = [d.id for d in days]
     by_day: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -261,6 +263,7 @@ def plan_detail(conn: Connection, today: date, plan_id: int | None) -> dict[str,
                 **_range(e),
                 "target_rir": e.target_rir,
                 "rest_s": e.rest_s,
+                "progression_override": e.progression_override,
             }
         )
     prescribed = (

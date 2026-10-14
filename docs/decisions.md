@@ -399,7 +399,7 @@ Status: decided. SPEC sections 9 and 15 updated.
 - **Proposal history** is the 12 weeks of activities dated before the session. Endurance interference applies on any date and uses the activities stored so far. Readiness applies only when the session is today (4a decision).
 - **An exercise on two days of a plan**: stalls in the snapshot and `evaluate_plan` use its first occurrence (day order, then position).
 - **Curation defaults.** Increment is 5 lb for barbell, dumbbell (per hand), machine, cable and bodyweight_plus (the logged load is the added weight). Bodyweight has none. `e1rm_eligible` defaults to true for barbell and dumbbell lifts with a compound pattern (not isolation, core or carry). Changing it rebuilds that exercise's stats.
-- **`activate_plan`** takes a start date up to 28 days back or ahead. Each day's session falls on its weekday inside week N's 7-day window. Calling again with the same start returns the schedule unchanged. Any other call on a non-draft plan is an error.
+- **`activate_plan`** takes a start date up to 28 days back or ahead. Each day's session falls on its weekday inside week N's 7-day window. Calling again with the same start returns the schedule unchanged. Any other call on a non-draft plan is an error. (Since 2026-10-13, plans change through `update_plan`, not re-activation.)
 - **`create_plan` is not deduplicated.** Each call saves a new draft, and drafts have no effect until activated.
 - **Snapshot stalls** list current miss streaks of 2 or more in the active plan. The list is `[]` (not null) once a plan is active. With no plan it is `[]` with the note "No active plan."
 - **Commits.** The write and calculation tools, the shared loaders and the snapshot stalls landed in one commit. The server imports all of them, and one test module covers them end to end.
@@ -563,3 +563,30 @@ Decisions, with the athlete:
 - Outside the SPEC phases: one branch and one PR.
 Status: decided. Garmin acceptance of a `cooldown` step with an exercise category is not yet checked against the real API. If it is rejected, fall back to interval steps and record it here.
 SPEC sections 7, 8.4 and 11.3, coaching-rules A.1, A.3, A.8 and Part B updated.
+
+## 2026-10-13: Plan updates
+
+Why: a plan could not change. A draft with a mistake had to be recreated, and a mid-block swap, weekday move or extra week meant `create_plan` + `activate_plan(replace=true)`, which abandons the block and skips its open sessions.
+
+Decisions, with the athlete:
+- **`update_plan`** edits a draft or an active plan. Completed and abandoned plans are an error.
+- **Full spec, not a patch.** The input is `create_plan`'s spec, built from `get_plan`, with `plan_day_id` on each kept day. No id: a new day. A live day left out: removed. Validation and warnings are `create_plan`'s. `get_plan` now shows `progression_override` so the spec round-trips.
+- **Everything is editable:** exercises, labels, weekdays, days, weeks, deload week, end criteria, name, rationale, model, goal.
+- **In place.** Stalls and streaks are re-derived from the current plan, so past in-plan exposures are judged against the new prescription. `prescribed_sets` stay as they were.
+- **After today.** On an active plan, completed or skipped sessions and anything dated today or earlier never change. Today's pushed workout stays; pushing it again uses the new plan.
+- **Schedule.** A day with an unchanged weekday keeps its dates, so reschedules survive. A new weekday moves its later open sessions; a move that would land on or before today keeps the old date. New days and weeks get sessions after today only. Removed days and weeks lose their open sessions after today. `weeks` cannot drop below the current week.
+- **Garmin.** Pushed sessions after today whose day changed (exercises, label or weekday, or any day when `progression_model` or `deload_week` changes) or that are deleted are removed from Garmin first, outside the transaction, then go back to `planned`. A Garmin failure changes nothing and a retry is safe. The tool takes `dry_run` and the same spec twice is a no-op.
+- **Removed days.** A removed day that still has sessions keeps its row and exercises with `plan_days.removed_on` (migration 0006), out of `get_plan` days and `evaluate_plan` lifts. One with no sessions is deleted.
+- **Log.** Active plans log one `plan_update` adjustment whose payload is the change summary. Drafts are not logged.
+- Outside the SPEC phases: one branch and one PR.
+Status: decided. SPEC sections 7 and 11.3, coaching-rules Part B and the interim instructions updated.
+
+## 2026-10-13: Migrations on deploy
+
+Why: migrations were applied to Neon by hand, and one was missed. Production was at 0004 while the deployed code expected 0005, so a plan with a cool-down stretch could not be saved.
+
+Decisions:
+- **`spotter migrate`** runs `alembic upgrade head` in one transaction under a Postgres advisory lock (`spotter.db.migrate.LOCK_KEY`), on `DATABASE_URL_UNPOOLED`. Two overlapping builds never migrate at once; a failed migration leaves the schema unchanged. It prints the revision before and after, and is safe to run anywhere (Docker, by hand).
+- **Production build step.** `vercel.json` `buildCommand` runs `uv run --no-dev spotter migrate` when `VERCEL_ENV` is `production`, and skips otherwise. Previews have no database variables. A build command makes Vercel expect static output, and an empty folder is rejected: `outputDirectory` is `public/`, which holds only a `robots.txt` that blocks crawlers. Static files win over the rewrite, so nothing else is served from there. This is configuration, so `api/index.py` stays the only Vercel-specific code.
+- **The schema moves before the code.** The build migrates before the new deployment goes live, and a deploy that fails after its build keeps the new schema under the old code. Migrations must therefore be additive (expand first, drop columns or constraints in a later deploy). A failed migration fails the build and nothing ships.
+Status: decided. To verify on the first production deploy: the build log shows the `migrate` line.

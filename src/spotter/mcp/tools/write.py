@@ -77,7 +77,14 @@ Muscle = Literal[
 GoalKind = Literal["strength", "hypertrophy", "hybrid", "endurance_support"]
 GoalStatus = Literal["active", "achieved", "dropped"]
 AdjustmentKind = Literal[
-    "load_change", "swap", "deload", "reschedule", "volume_change", "end_plan", "other"
+    "load_change",
+    "swap",
+    "deload",
+    "reschedule",
+    "volume_change",
+    "end_plan",
+    "plan_update",
+    "other",
 ]
 
 # Smallest real jump by load type (SPEC section 6). Bodyweight cannot progress by load.
