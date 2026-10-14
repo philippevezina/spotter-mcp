@@ -16,7 +16,7 @@ Sport = Literal["run", "ride"]
 TrendMetric = Literal["e1rm", "top_set_weight", "top_set_reps", "top_set_hold"]
 TrendDirection = Literal["up", "flat", "down", "insufficient_data"]
 Model = Literal["double_progression", "linear", "rir_based"]
-Role = Literal["main", "secondary", "accessory"]
+Role = Literal["main", "secondary", "accessory", "cooldown"]
 LoadType = Literal["barbell", "dumbbell_each", "machine", "cable", "bodyweight", "bodyweight_plus"]
 Judgement = Literal["hit", "miss", "hold_range", "short"]
 ProposalStatus = Literal["ok", "needs_calibration"]
@@ -158,7 +158,9 @@ class Prescription:
     `lower_body`: the exercise's pattern is squat, hinge or lunge (linear step size,
     endurance interference). `increment_lb` is None when load cannot progress.
     For a timed exercise (`measure="time"`) `rep_min`, `rep_max` and every rep count are
-    seconds held, and the model is double progression.
+    seconds held, and the model is double progression. A `cooldown` exercise (a stretch)
+    holds `rep_max` seconds on every set and never reads `target_rir` (the tool layer
+    passes 0) or the model.
     """
 
     sets: int
@@ -198,7 +200,7 @@ class ExerciseProposal:
     sets: int
     target_reps: tuple[int, ...]
     weight_lb: Decimal | None
-    target_rir: int
+    target_rir: int | None  # None for cooldown
     rest_s: int
     rule_fired: str
     reasons: tuple[str, ...] = ()

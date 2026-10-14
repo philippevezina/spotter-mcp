@@ -59,6 +59,8 @@ RIR_LOW_BELOW = 1  # reported RIR < target - 1 is harder than planned
 DOUBLE_RIR_TOLERANCE = 1
 # A.3 timed holds: double progression adds this many seconds per set instead of 1 rep.
 HOLD_STEP_S = 5
+# A.3 cool-down: stretches hold the top of their hold range on every set, never progress.
+COOLDOWN_RULE = "cooldown:fixed"
 
 # A.4: stalls. Consecutive misses at the same working weight.
 STALL_WARNING_MISSES = 2

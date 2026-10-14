@@ -180,6 +180,8 @@ def evaluate(conn: Connection, plan_id: int | None, today: date) -> dict[str, An
     lifts = []
     main_stalls = {}
     for exercise_id, (name, rx) in plan_prescriptions(conn, plan).items():
+        if rx.role == "cooldown":  # stretches are logged, not judged
+            continue
         hist = [
             e
             for e in exposures(conn, exercise_id, cutoff, plan, deloads)

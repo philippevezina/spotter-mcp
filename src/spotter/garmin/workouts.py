@@ -18,6 +18,7 @@ from spotter.units import garmin_step_kg
 SPORT = {"sportTypeId": 5, "sportTypeKey": "strength_training", "displayOrder": 5}
 NO_TARGET = {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1}
 KILOGRAM = {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0}
+COOLDOWN = {"stepTypeId": 2, "stepTypeKey": "cooldown", "displayOrder": 2}
 INTERVAL = {"stepTypeId": 3, "stepTypeKey": "interval", "displayOrder": 3}
 REST = {"stepTypeId": 5, "stepTypeKey": "rest", "displayOrder": 5}
 REPEAT = {"stepTypeId": 6, "stepTypeKey": "repeat", "displayOrder": 6}
@@ -58,6 +59,7 @@ class WorkoutExercise:
     sets: tuple[WorkoutSet, ...]
     rest_s: int | None
     increment_lb: Decimal | None
+    cooldown: bool = False  # a stretch: cool-down steps, never a repeat group
 
 
 @dataclass(frozen=True)
@@ -79,7 +81,7 @@ def _exercise_step(ex: WorkoutExercise, s: WorkoutSet, order: int) -> dict[str, 
     step: dict[str, Any] = {
         "type": "ExecutableStepDTO",
         "stepOrder": order,
-        "stepType": INTERVAL,
+        "stepType": COOLDOWN if ex.cooldown else INTERVAL,
         "endCondition": END_TIME if timed else END_REPS,
         "endConditionValue": float(value),
         "targetType": NO_TARGET,
@@ -111,7 +113,7 @@ def _set_seconds(s: WorkoutSet) -> int:
 
 
 def _uniform(ex: WorkoutExercise) -> bool:
-    return len(ex.sets) > 1 and len(set(ex.sets)) == 1
+    return not ex.cooldown and len(ex.sets) > 1 and len(set(ex.sets)) == 1
 
 
 def build_workout(workout: Workout) -> dict[str, Any]:
@@ -121,6 +123,8 @@ def build_workout(workout: Workout) -> dict[str, Any]:
     Identical sets become one repeat group (its rest follows every set). Different
     sets become exercise + rest step pairs, so each set keeps its own weight. Rest
     follows every set except the last one of the workout. Step orders are unique.
+    Cool-down sets are cool-down steps, one per set: Phase 0 only checked interval steps
+    inside a repeat group.
     """
     if not workout.exercises or any(not ex.sets for ex in workout.exercises):
         raise ValueError("a workout needs at least one exercise, each with a set")

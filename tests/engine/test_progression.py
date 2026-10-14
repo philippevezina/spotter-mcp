@@ -764,3 +764,49 @@ def test_timed_deload_and_red() -> None:
     red = apply_modifiers(PLANK, base, "red", False)
     # accessory keeps its sets; red blocks the +5 s
     assert (red.sets, red.target_reps, red.modifiers) == (3, (40, 40, 40), ("readiness:red",))
+
+
+# Cool-down (A.3) -------------------------------------------------------------------
+
+
+def cooldown(**kw: Any) -> Prescription:
+    return rx(
+        sets=2,
+        rep_min=20,
+        rep_max=30,
+        target_rir=0,
+        rest_s=10,
+        role="cooldown",
+        model="double_progression",
+        increment_lb=None,
+        load_type="bodyweight",
+        measure="time",
+        **kw,
+    )
+
+
+def test_cooldown_holds_the_top_of_the_range_without_history() -> None:
+    assert next_prescription(cooldown(), [], START) == ExerciseProposal(
+        status="ok",
+        sets=2,
+        target_reps=(30, 30),
+        weight_lb=None,
+        target_rir=None,
+        rest_s=10,
+        rule_fired="cooldown:fixed",
+    )
+
+
+def test_cooldown_ignores_history_misses_and_never_stalls() -> None:
+    history = [ex(d, (None, 10), (None, 10)) for d in (0, 7, 14)]
+    p = next_prescription(cooldown(), history, START)
+    assert (p.target_reps, p.flags, p.rule_fired) == ((30, 30), (), "cooldown:fixed")
+    assert stall_streak(cooldown(), history) == 0
+    assert stall_events(cooldown(), history) == []
+
+
+def test_cooldown_passes_through_deload_and_modifiers() -> None:
+    c = cooldown()
+    p = next_prescription(c, [], START)
+    assert deload(c, p) == p
+    assert apply_modifiers(c, p, "red", interference=True) == p

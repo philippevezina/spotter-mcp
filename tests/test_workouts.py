@@ -158,3 +158,33 @@ def test_set_needs_reps_or_hold(bad: WorkoutSet) -> None:
     ex = WorkoutExercise("PLANK", "SIDE_PLANK", (bad,), 60, None)
     with pytest.raises(ValueError, match="reps or hold_s"):
         build_workout(Workout("x", "", (ex,)))
+
+
+COOLDOWN_SNAPSHOT = Path(__file__).parent / "snapshots" / "workout_cooldown.json"
+QUAD_STRETCH = WorkoutExercise(
+    "WARM_UP",
+    "STRETCH_QUAD",
+    (WorkoutSet(None, None, 30), WorkoutSet(None, None, 30)),
+    10,
+    None,
+    cooldown=True,
+)
+CORE_COOLDOWN = Workout(
+    name="Core W1 2026-10-13", description="", exercises=(SIDE_PLANK, QUAD_STRETCH)
+)
+
+
+def test_cooldown_snapshot() -> None:
+    payload = build_workout(CORE_COOLDOWN)
+    if os.environ.get("UPDATE_SNAPSHOTS"):
+        COOLDOWN_SNAPSHOT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    assert payload == json.loads(COOLDOWN_SNAPSHOT.read_text())
+
+
+def test_cooldown_sets_are_single_cooldown_steps() -> None:
+    steps = build_workout(CORE_COOLDOWN)["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["type"] == "RepeatGroupDTO"  # the side plank
+    tail = [(s["stepType"]["stepTypeKey"], s["endConditionValue"]) for s in steps[1:]]
+    assert tail == [("cooldown", 30.0), ("rest", 10.0), ("cooldown", 30.0)]
+    orders = [steps[0]["stepOrder"], *(s["stepOrder"] for s in steps[1:])]
+    assert orders == sorted(set(orders))

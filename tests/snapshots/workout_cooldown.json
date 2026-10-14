@@ -1,0 +1,153 @@
+{
+  "description": "",
+  "estimatedDurationInSecs": 350,
+  "sportType": {
+    "displayOrder": 5,
+    "sportTypeId": 5,
+    "sportTypeKey": "strength_training"
+  },
+  "workoutName": "Core W1 2026-10-13",
+  "workoutSegments": [
+    {
+      "segmentOrder": 1,
+      "sportType": {
+        "displayOrder": 5,
+        "sportTypeId": 5,
+        "sportTypeKey": "strength_training"
+      },
+      "workoutSteps": [
+        {
+          "endCondition": {
+            "conditionTypeId": 7,
+            "conditionTypeKey": "iterations",
+            "displayOrder": 7,
+            "displayable": false
+          },
+          "endConditionValue": 3.0,
+          "numberOfIterations": 3,
+          "smartRepeat": false,
+          "stepOrder": 1,
+          "stepType": {
+            "displayOrder": 6,
+            "stepTypeId": 6,
+            "stepTypeKey": "repeat"
+          },
+          "type": "RepeatGroupDTO",
+          "workoutSteps": [
+            {
+              "category": "PLANK",
+              "endCondition": {
+                "conditionTypeId": 2,
+                "conditionTypeKey": "time",
+                "displayOrder": 2,
+                "displayable": true
+              },
+              "endConditionValue": 30.0,
+              "exerciseName": "SIDE_PLANK",
+              "stepOrder": 2,
+              "stepType": {
+                "displayOrder": 3,
+                "stepTypeId": 3,
+                "stepTypeKey": "interval"
+              },
+              "targetType": {
+                "displayOrder": 1,
+                "workoutTargetTypeId": 1,
+                "workoutTargetTypeKey": "no.target"
+              },
+              "type": "ExecutableStepDTO"
+            },
+            {
+              "endCondition": {
+                "conditionTypeId": 2,
+                "conditionTypeKey": "time",
+                "displayOrder": 2,
+                "displayable": true
+              },
+              "endConditionValue": 60.0,
+              "stepOrder": 3,
+              "stepType": {
+                "displayOrder": 5,
+                "stepTypeId": 5,
+                "stepTypeKey": "rest"
+              },
+              "targetType": {
+                "displayOrder": 1,
+                "workoutTargetTypeId": 1,
+                "workoutTargetTypeKey": "no.target"
+              },
+              "type": "ExecutableStepDTO"
+            }
+          ]
+        },
+        {
+          "category": "WARM_UP",
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 30.0,
+          "exerciseName": "STRETCH_QUAD",
+          "stepOrder": 4,
+          "stepType": {
+            "displayOrder": 2,
+            "stepTypeId": 2,
+            "stepTypeKey": "cooldown"
+          },
+          "targetType": {
+            "displayOrder": 1,
+            "workoutTargetTypeId": 1,
+            "workoutTargetTypeKey": "no.target"
+          },
+          "type": "ExecutableStepDTO"
+        },
+        {
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 10.0,
+          "stepOrder": 5,
+          "stepType": {
+            "displayOrder": 5,
+            "stepTypeId": 5,
+            "stepTypeKey": "rest"
+          },
+          "targetType": {
+            "displayOrder": 1,
+            "workoutTargetTypeId": 1,
+            "workoutTargetTypeKey": "no.target"
+          },
+          "type": "ExecutableStepDTO"
+        },
+        {
+          "category": "WARM_UP",
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 30.0,
+          "exerciseName": "STRETCH_QUAD",
+          "stepOrder": 6,
+          "stepType": {
+            "displayOrder": 2,
+            "stepTypeId": 2,
+            "stepTypeKey": "cooldown"
+          },
+          "targetType": {
+            "displayOrder": 1,
+            "workoutTargetTypeId": 1,
+            "workoutTargetTypeKey": "no.target"
+          },
+          "type": "ExecutableStepDTO"
+        }
+      ]
+    }
+  ]
+}

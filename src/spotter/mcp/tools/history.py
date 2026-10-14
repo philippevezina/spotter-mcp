@@ -67,7 +67,7 @@ def prescription(pe: Row[Any], ex: Row[Any], plan_model: str) -> Prescription:
         sets=pe.sets,
         rep_min=pe.hold_min_s if timed else pe.rep_min,
         rep_max=pe.hold_max_s if timed else pe.rep_max,
-        target_rir=pe.target_rir,
+        target_rir=pe.target_rir if pe.target_rir is not None else 0,  # None: cooldown
         rest_s=pe.rest_s,
         role=cast(Role, pe.role),
         model=model_for(pe.role, plan_model, pe.progression_override, ex.measure),
